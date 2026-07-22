@@ -899,8 +899,6 @@ const FORAGE = {
   },
 };
 
-const SOIL_GENERIC = "Soil type varies significantly even within a single county. Use the Web Soil Survey link below for the authoritative, parcel-level soil classification.";
-
 // General regional soil character by state — real, well-documented soil geography (USDA soil order /
 // land resource region patterns), not a parcel-level survey. Texas gets a finer longitude-based estimate
 // since it's the primary service area; every other state still gets a genuine regional estimate, not a shrug.
@@ -938,7 +936,9 @@ const SOIL_BY_STATE_GENERAL = {
   "New Hampshire":{desc:"Rocky glacial till soils similar to Vermont, thin topsoil.",drainage:"Well-drained on slopes.",workability:"Rocky and labor-intensive.",ph:"Acidic."},
   "Maine":{desc:"Rocky, acidic, glacially-derived soils with thin topsoil.",drainage:"Well-drained on slopes, poorly-drained in low-lying and coastal areas.",workability:"Rocky and labor-intensive.",ph:"Acidic."},
   "Connecticut":{desc:"Rocky glacial till, similar character to the rest of southern New England.",drainage:"Generally well-drained.",workability:"Rocky and labor-intensive.",ph:"Acidic."},
+  "Rhode Island":{desc:"Rocky, glacially-derived soils typical of southern New England, similar in character to neighboring Connecticut and Massachusetts.",drainage:"Generally well-drained due to rocky, sloped terrain.",workability:"Rocky and labor-intensive.",ph:"Acidic."},
   "Maryland":{desc:"Sandy coastal plain in the east, clay Piedmont soils in the central region.",drainage:"Coastal sand drains fast; Piedmont clay drains slowly.",workability:"Easy on the coast, heavier inland.",ph:"Acidic to near-neutral."},
+  "Delaware":{desc:"Almost entirely sandy Atlantic coastal plain, similar in character to neighboring Maryland's and New Jersey's coastal soils.",drainage:"Generally fast-draining sandy soil, though low-lying areas near tidal wetlands can stay wet.",workability:"Easy to work \u2014 sandy texture with low natural fertility without amendment.",ph:"Acidic to near-neutral."},
   "California":{desc:"Highly variable: fertile alluvial soils in the Central Valley, sandy/rocky coastal soils, arid sandy soils in the south and desert regions.",drainage:"Central Valley is generally well-drained; coastal and desert regions vary widely.",workability:"Easy in the Central Valley, more variable elsewhere.",ph:"Near-neutral in the Central Valley, alkaline in southern desert regions."},
   "Oregon":{desc:"Fertile volcanic-influenced soils west of the Cascades, drier and more mineral in the high desert east side.",drainage:"Well-drained west of the Cascades; the high desert east side drains fast but holds little water.",workability:"Easy west of the Cascades.",ph:"Slightly acidic west of the Cascades, near-neutral to alkaline east."},
   "Washington":{desc:"Fertile volcanic-influenced soils west of the Cascades, arid sandy/basalt-derived soils in the east.",drainage:"Well-drained west of the Cascades; fast-draining basalt soils in the east.",workability:"Easy west of the Cascades, rockier basalt soils in the east.",ph:"Slightly acidic west of the Cascades, near-neutral to alkaline east."},
@@ -1006,7 +1006,18 @@ function guessSoilProfile(lat, lon, state){
   if(normState && SOIL_BY_STATE_GENERAL[normState]){
     return { guess: SOIL_BY_STATE_GENERAL[normState], confidence: "state-level regional estimate, not parcel-specific" };
   }
-  return { guess: { desc: SOIL_GENERIC, drainage: null, workability: null, ph: null }, confidence: "no regional heuristic available for this state" };
+  // True last resort — every US state is covered above, so this only fires if geocoding genuinely
+  // didn't return a usable state at all. Still gives real, structured content instead of blank fields,
+  // just honestly labeled as broader than a state-level estimate.
+  return {
+    guess: {
+      desc: "A specific state couldn't be determined for this location, so this is a broad estimate rather than a regional one: soil type and drainage vary enormously even within a single county, and without a matched state this can't be narrowed further.",
+      drainage: "Highly variable \u2014 depends entirely on local terrain and geology, which can't be estimated without more specific location data.",
+      workability: "Unknown without more specific location data.",
+      ph: "Unknown without more specific location data."
+    },
+    confidence: "no location-specific data available \u2014 broadest possible estimate"
+  };
 }
 
 
