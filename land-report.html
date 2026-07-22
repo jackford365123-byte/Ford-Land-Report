@@ -422,6 +422,12 @@ const CONFIG = {
     // "code-you-send-them": { tier: "single" | "monthly", brokerName: "Shown Name" or null }
     "solo19-demo": { tier: "single", brokerName: null },
     "unlimited39-demo": { tier: "monthly", brokerName: null },
+    // Customer-service codes — hand these out (not the demo codes above) when resolving a complaint
+    // or comping access. Like all access codes, these unlock freely across any address, not just one —
+    // that's deliberate, unlike a real Stripe purchase, since these exist specifically for situations
+    // where the normal purchase flow already went wrong for that customer.
+    "GrA3O47q8pQx5JNC": { tier: "single", brokerName: null },   // hand out for a Single Report ($19) complaint/comp
+    "IaQOSGiKsFVt9OrA": { tier: "monthly", brokerName: null },  // hand out for an Unlimited Monthly ($39) complaint/comp
   },
   // Jack's personal owner code — unlocks full (monthly-tier) access for testing, but deliberately does
   // NOT persist across page reloads (see checkAccessCode/ownerUnlock) so the device always shows the
@@ -468,8 +474,13 @@ function isPaid(currentAddress){
   // device, but also not so single-use that revisiting the same property you already paid for
   // demands paying again. A different address after the first one still needs a new purchase.
   // Unlimited Monthly has no such check — staying unlocked for every address is the entire point.
+  // This restriction ONLY applies to a real, verified Stripe purchase — NOT to a manually-issued
+  // access code. A code is only ever handed out by Jack to someone he's already trusting paid, so
+  // re-locking it to one address would just break the one legitimate use for codes at all (re-access
+  // on a new device, or Jack's own testing across many addresses).
   try {
-    if(localStorage.getItem("landreport_tier") === "single" && localStorage.getItem("landreport_single_used") === "true"){
+    const source = localStorage.getItem("landreport_unlock_source");
+    if(source === "stripe" && localStorage.getItem("landreport_tier") === "single" && localStorage.getItem("landreport_single_used") === "true"){
       const paidAddress = localStorage.getItem("landreport_single_paid_address") || "";
       const normalizedCurrent = (currentAddress || "").trim().toLowerCase();
       if(normalizedCurrent && normalizedCurrent === paidAddress.trim().toLowerCase()){
@@ -481,14 +492,12 @@ function isPaid(currentAddress){
   return true;
 }
 
-// Marks a Single Report purchase as consumed for a specific address — called right after a report
-// successfully finishes generating while on the single tier. Storing the address (not just a used
-// flag) is what lets someone re-view the same property later without paying again, while still
-// requiring a new purchase for any different address. Monthly tier and the owner's in-memory unlock
-// never call this, since neither is meant to be single-use.
+// Marks a Single Report purchase as consumed for a specific address — only for real Stripe purchases,
+// never for access codes (see isPaid() above for why). Called right after a report successfully
+// finishes generating while on the single tier.
 function markSingleReportUsedIfApplicable(address){
   try {
-    if(!ownerUnlock && localStorage.getItem("landreport_tier") === "single"){
+    if(!ownerUnlock && localStorage.getItem("landreport_unlock_source") === "stripe" && localStorage.getItem("landreport_tier") === "single"){
       localStorage.setItem("landreport_single_used", "true");
       localStorage.setItem("landreport_single_paid_address", (address || "").trim().toLowerCase());
     }
@@ -519,6 +528,12 @@ function checkAccessCode(code){
     localStorage.setItem("landreport_paid", "true");
     localStorage.setItem("landreport_tier", entry.tier);
     localStorage.setItem("landreport_broker_name", entry.brokerName || "");
+    localStorage.setItem("landreport_unlock_source", "code");
+    // Clear any stale single-use lock from a previous real purchase on this device, so a code (which
+    // is exempt from the one-address restriction) actually works as unlimited-for-testing/reuse
+    // rather than inheriting an old lock from before.
+    localStorage.removeItem("landreport_single_used");
+    localStorage.removeItem("landreport_single_paid_address");
   } catch(e){}
   return true;
 }
@@ -4306,6 +4321,7 @@ document.getElementById("searchForm").addEventListener("submit", handleSubmit);
   try {
     localStorage.setItem("landreport_paid", "true");
     localStorage.setItem("landreport_tier", result.tier);
+    localStorage.setItem("landreport_unlock_source", "stripe");
   } catch(e){}
 
   let pendingAddress = null;
