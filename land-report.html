@@ -453,7 +453,7 @@ let lastGeneratedAddress = null;
 // exactly like a real visitor, until the code is entered again.
 let ownerUnlock = null;
 
-function isPaid(){
+function isPaid(currentAddress){
   if(!CONFIG.paywallEnabled) return true;
   if(ownerUnlock) return true;
   // Deliberately does NOT trust a ?paid=true URL param anymore — that was the actual security hole:
@@ -461,7 +461,38 @@ function isPaid(){
   // Real verification happens once, server-side, in verifyPaymentAndResume() below; the result of that
   // verification is what sets localStorage. From here, isPaid() only ever checks that already-verified
   // local state, never anything in the current URL.
-  try { return localStorage.getItem("landreport_paid") === "true"; } catch(e){ return false; }
+  let paidFlag = false;
+  try { paidFlag = localStorage.getItem("landreport_paid") === "true"; } catch(e){ return false; }
+  if(!paidFlag) return false;
+  // Single Report unlocks one address, re-viewable anytime after — not unlimited reports on that
+  // device, but also not so single-use that revisiting the same property you already paid for
+  // demands paying again. A different address after the first one still needs a new purchase.
+  // Unlimited Monthly has no such check — staying unlocked for every address is the entire point.
+  try {
+    if(localStorage.getItem("landreport_tier") === "single" && localStorage.getItem("landreport_single_used") === "true"){
+      const paidAddress = localStorage.getItem("landreport_single_paid_address") || "";
+      const normalizedCurrent = (currentAddress || "").trim().toLowerCase();
+      if(normalizedCurrent && normalizedCurrent === paidAddress.trim().toLowerCase()){
+        return true; // same address they already paid for — still allowed
+      }
+      return false; // a different address (or no address to compare) — needs a new purchase
+    }
+  } catch(e){}
+  return true;
+}
+
+// Marks a Single Report purchase as consumed for a specific address — called right after a report
+// successfully finishes generating while on the single tier. Storing the address (not just a used
+// flag) is what lets someone re-view the same property later without paying again, while still
+// requiring a new purchase for any different address. Monthly tier and the owner's in-memory unlock
+// never call this, since neither is meant to be single-use.
+function markSingleReportUsedIfApplicable(address){
+  try {
+    if(!ownerUnlock && localStorage.getItem("landreport_tier") === "single"){
+      localStorage.setItem("landreport_single_used", "true");
+      localStorage.setItem("landreport_single_paid_address", (address || "").trim().toLowerCase());
+    }
+  } catch(e){}
 }
 
 function getTier(){
@@ -2528,7 +2559,7 @@ async function handleSubmit(e){
       '<p style="margin-top:12px;font-size:12px;color:var(--ink-faint);">Parcel ID (APN), legal description, ownership, deed/sales/tax history, and easements are county-recorded records not available through free public APIs \u2014 see Additional Data &amp; Resources below for where to pull these directly.</p>'
     );
 
-    const paid = isPaid();
+    const paid = isPaid(geo.displayName);
 
     html += sectionDivider("Topography, Hydrology & Flood");
 
@@ -3252,6 +3283,7 @@ async function handleSubmit(e){
     populatePrintTOC();
     convertSectionsToAccordions();
     results.insertAdjacentHTML("beforeend", tailHtml);
+    if(paid) markSingleReportUsedIfApplicable(geo.displayName);
     initMap(geo, paid && terrainRes.status === "fulfilled" ? terrainRes.value : null, paid ? sunToday : null, parcelSet, undefined, streamsRes.status === "fulfilled" ? streamsRes.value : [], paid);
     initCountyGisLink(geo);
     initAccessCodeLogin();
@@ -3822,7 +3854,7 @@ function initMap(geo, terrain, sunToday, parcelSet, initialIndex, streams, paid)
     // access path, best-site marker, drainage arrows — actually move to the new parcel consistently,
     // rather than trying to surgically patch five different layer groups and risk them going out of sync.
     if(terrainResult.status === "fulfilled"){
-      const stillPaid = isPaid();
+      const stillPaid = isPaid(geo.displayName);
       initMap(geo, stillPaid ? terrainResult.value : null, stillPaid ? sunToday : null, parcelSet, i, streams, stillPaid);
     }
     if(mapContainer) mapContainer.style.opacity = "1"; // reset regardless of success/failure — this was the actual bug: it only ever got reset on failure
