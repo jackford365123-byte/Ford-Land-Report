@@ -2533,7 +2533,12 @@ async function handleSubmit(e){
     const zoneNum = hardinessRes.status === "fulfilled" ? parseInt(hardinessRes.value.zone) : 8;
     const bucket = zoneBucket(isNaN(zoneNum) ? 8 : zoneNum);
     const soilNote = guessSoilProfile(geo.lat, geo.lon, geo.state);
-    const realSoil = soilRes && soilRes.status === "fulfilled" ? soilRes.value : null;
+    // The SDA lookup can technically "succeed" (no thrown error) while returning an object with none
+    // of the fields that actually matter — no name, no drainage class, nothing. That's not usable real
+    // data, it's an empty response, and should fall through to the regional estimate below rather than
+    // display an "Unnamed soil unit" card with nothing useful in it.
+    const rawSoil = soilRes && soilRes.status === "fulfilled" ? soilRes.value : null;
+    const realSoil = (rawSoil && (rawSoil.muname || rawSoil.compname || rawSoil.drainagecl || rawSoil.hydgrp || rawSoil.taxclname)) ? rawSoil : null;
     const sunToday = sunriseSunsetAzimuth(geo.lat, dayOfYearFor(new Date()));
     const sunSummer = sunriseSunsetAzimuth(geo.lat, 172);
     const sunWinter = sunriseSunsetAzimuth(geo.lat, 355);
