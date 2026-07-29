@@ -10,7 +10,16 @@
 <meta name="description" content="Enter any U.S. address for a flood zone, hydrology, climate, soil, and land-use report from public data sources.">
 <meta property="og:title" content="Land Report — Ford Stewardship">
 <meta property="og:description" content="Real public data compiled into one land report, for any U.S. address.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230B0F1A' stroke='%2322C7A9' stroke-width='1.3'/%3E%3Cpath d='M6 17c3.5-2.5 6-2.5 10 0s6.5 2.5 10 0' stroke='%235EEAD4' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://fordlandreport.com/land-report.html">
+<meta property="og:image" content="https://fordlandreport.com/og-preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Land Report — Ford Stewardship">
+<meta name="twitter:description" content="Real public data compiled into one land report, for any U.S. address.">
+<meta name="twitter:image" content="https://fordlandreport.com/og-preview.jpg">
+<link rel="canonical" href="https://fordlandreport.com/land-report.html"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230B0F1A' stroke='%2322C7A9' stroke-width='1.3'/%3E%3Cpath d='M6 17c3.5-2.5 6-2.5 10 0s6.5 2.5 10 0' stroke='%235EEAD4' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -427,28 +436,13 @@ const CONFIG = {
   // Set to false to disable the paywall entirely and make the tool fully free.
   paywallEnabled: true,
 
-  // Manual login codes — no backend exists to auto-generate/email these per purchase, so this is a
-  // real, honest workaround: Stripe emails you every payment notification; you reply to that buyer with
-  // a code from this list, and they use it to log back in from any device later instead of being stuck
-  // on whichever device they originally paid from. Add/edit freely. The "brokerName" field still works
-  // if you ever want to manually give a specific realtor co-branded access — it's just not sold as its
-  // own public pricing tier anymore.
-  ACCESS_CODES: {
-    // "code-you-send-them": { tier: "single" | "monthly", brokerName: "Shown Name" or null }
-    "solo19-demo": { tier: "single", brokerName: null },
-    "unlimited39-demo": { tier: "monthly", brokerName: null },
-    // Customer-service codes — hand these out (not the demo codes above) when resolving a complaint
-    // or comping access. Like all access codes, these unlock freely across any address, not just one —
-    // that's deliberate, unlike a real Stripe purchase, since these exist specifically for situations
-    // where the normal purchase flow already went wrong for that customer.
-    "GrA3O47q8pQx5JNC": { tier: "single", brokerName: null },   // hand out for a Single Report ($19) complaint/comp
-    "IaQOSGiKsFVt9OrA": { tier: "monthly", brokerName: null },  // hand out for an Unlimited Monthly ($39) complaint/comp
-  },
-  // Jack's personal owner code — unlocks full (monthly-tier) access for testing, but deliberately does
-  // NOT persist across page reloads (see checkAccessCode/ownerUnlock) so the device always shows the
-  // genuine free tier by default. Long and random on purpose so it can't be guessed; keep it private,
-  // it's not meant to be shared or given to customers. Enter it in the "Already purchased? Log in" box.
-  OWNER_ACCESS_CODE: "NKhaTYKrFvG75OeE9FW7jL4H",
+  // Access codes (demo, customer-service, and the owner's personal code) are NOT defined here anymore -
+  // they moved to netlify/functions/verify-access-code.js, which runs server-side. This is a real
+  // security fix, not just reorganizing code: before this, every code sat in plain readable text in
+  // this page's source, visible to anyone via "View Page Source" - a completely normal, one-click
+  // action. Now the actual code values never reach the browser at all; checkAccessCode() below just
+  // asks the server "is this code valid?" and gets back a yes/no plus the tier, nothing more.
+  // To add, change, or remove a code: edit netlify/functions/verify-access-code.js directly.
 };
 
 // IMPORTANT — what's actually verified now, and what still isn't: the moment someone unlocks (right
@@ -560,18 +554,30 @@ function getTier(){
 // One exception: the owner's personal code (see CONFIG.OWNER_ACCESS_CODE) intentionally does NOT persist
 // to localStorage — it unlocks only in memory for the current page load, so reloading always goes back
 // to the genuine free-tier view rather than staying permanently unlocked on this device.
-function checkAccessCode(code){
+async function checkAccessCode(code){
   const trimmed = code.trim();
-  if(trimmed === CONFIG.OWNER_ACCESS_CODE){
-    ownerUnlock = { tier: "monthly" };
+  let result;
+  try {
+    const res = await fetch("/.netlify/functions/verify-access-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: trimmed }),
+    });
+    result = await res.json();
+  } catch(e){
+    return false;
+  }
+  if(!result || !result.valid) return false;
+
+  if(result.isOwner){
+    ownerUnlock = { tier: result.tier };
     return true;
   }
-  const entry = CONFIG.ACCESS_CODES[trimmed];
-  if(!entry) return false;
+
   try {
     localStorage.setItem("landreport_paid", "true");
-    localStorage.setItem("landreport_tier", entry.tier);
-    localStorage.setItem("landreport_broker_name", entry.brokerName || "");
+    localStorage.setItem("landreport_tier", result.tier);
+    localStorage.setItem("landreport_broker_name", result.brokerName || "");
     localStorage.setItem("landreport_unlock_source", "code");
     // Clear any stale single-use lock from a previous real purchase on this device, so a code (which
     // is exempt from the one-address restriction) actually works as unlimited-for-testing/reuse
@@ -591,10 +597,17 @@ function initAccessCodeLogin(){
   if(!btn) return;
   const input = document.getElementById("accessCodeInput");
   const errEl = document.getElementById("accessCodeError");
-  btn.addEventListener("click", function(){
+  btn.addEventListener("click", async function(){
     const code = input.value.trim();
     if(!code) return;
-    if(checkAccessCode(code)){
+    errEl.style.display = "none";
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Checking\u2026";
+    const isValid = await checkAccessCode(code);
+    btn.disabled = false;
+    btn.textContent = originalText;
+    if(isValid){
       // Re-run the same report generation for the current address — isPaid() will now return true,
       // so this re-render shows the full paid content instead of the paywall, no page reload needed.
       handleSubmit({ preventDefault: function(){} });
