@@ -474,6 +474,12 @@ let lastGeneratedAddress = null;
 // exactly like a real visitor, until the code is entered again.
 let ownerUnlock = null;
 
+// Set at the moment of submission (see handleSubmit) based on the raw typed/filled address, not the
+// geocoded result - geocoders often reformat an address into something that wouldn't string-match
+// reliably anymore. Reset on every new submission, so viewing the example then a real address
+// afterward correctly goes back to that address's real paid/free status.
+let isViewingExampleAddress = false;
+
 // Funnel tracking — uses Netlify's own Web Analytics, not Google Analytics or any external service.
 // Netlify counts every unique URL path requested from this site, even ones that don't correspond to a
 // real page (you've already seen this yourself in "Top resources not found," which counts 404s the
@@ -496,6 +502,10 @@ function trackEvent(path){
 function isPaid(currentAddress){
   if(!CONFIG.paywallEnabled) return true;
   if(ownerUnlock) return true;
+  // The example/demo address always shows as a fully unlocked report - see isViewingExampleAddress,
+  // set at the moment of submission (before geocoding reformats the address into something that might
+  // not string-match EXAMPLE_ADDRESS exactly anymore).
+  if(isViewingExampleAddress) return true;
   // Deliberately does NOT trust a ?paid=true URL param anymore — that was the actual security hole:
   // anyone could copy a URL like that (or just type it) and get unlocked without paying anything.
   // Real verification happens once, server-side, in verifyPaymentAndResume() below; the result of that
@@ -2487,6 +2497,7 @@ async function handleSubmit(e){
   e.preventDefault();
   const address = document.getElementById("addressInput").value.trim();
   if(!address) return;
+  isViewingExampleAddress = (typeof EXAMPLE_ADDRESS !== "undefined" && address.toLowerCase() === EXAMPLE_ADDRESS.trim().toLowerCase());
   trackEvent("address-submitted");
   const btn = document.getElementById("submitBtn");
   const errBox = document.getElementById("errorMsg");
@@ -3373,7 +3384,7 @@ async function handleSubmit(e){
     trackEvent("report-generated-" + (paid ? getTier() : "free"));
     if(!paid) trackEvent("paywall-viewed");
     logAddressSubmission(geo.displayName, paid ? getTier() : "free");
-    if(paid) markSingleReportUsedIfApplicable(geo.displayName);
+    if(paid && !isViewingExampleAddress) markSingleReportUsedIfApplicable(geo.displayName);
     initMap(geo, paid && terrainRes.status === "fulfilled" ? terrainRes.value : null, paid ? sunToday : null, parcelSet, undefined, streamsRes.status === "fulfilled" ? streamsRes.value : [], paid);
     initCountyGisLink(geo);
     initAccessCodeLogin();
@@ -4411,7 +4422,11 @@ document.getElementById("searchForm").addEventListener("submit", handleSubmit);
 // or are hesitant to type a real address into an unfamiliar new site. One tap removes both frictions.
 // EXAMPLE_ADDRESS is a real, clearly public location (not a private residence) - change this to
 // whatever address you'd prefer to showcase.
-const EXAMPLE_ADDRESS = "LBJ Ranch, Stonewall, TX";
+// EXAMPLE_ADDRESS must be a real, structured street address (house number + road + city + state + zip)
+// for geocoding to work reliably - an informal landmark name like "LBJ Ranch, Stonewall, TX" lacks a
+// house number and isn't reliably resolvable by OpenStreetMap/Census geocoding. This is the actual,
+// confirmed street address of the Lyndon B. Johnson National Historical Park visitor site.
+const EXAMPLE_ADDRESS = "199 Park Road 52, Stonewall, TX 78671";
 document.getElementById("tryExampleLink").addEventListener("click", function(e){
   e.preventDefault();
   trackEvent("example-address-clicked");
