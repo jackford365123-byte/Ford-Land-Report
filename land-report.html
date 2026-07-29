@@ -4423,10 +4423,9 @@ document.getElementById("searchForm").addEventListener("submit", handleSubmit);
 // EXAMPLE_ADDRESS is a real, clearly public location (not a private residence) - change this to
 // whatever address you'd prefer to showcase.
 // EXAMPLE_ADDRESS must be a real, structured street address (house number + road + city + state + zip)
-// for geocoding to work reliably - an informal landmark name like "LBJ Ranch, Stonewall, TX" lacks a
-// house number and isn't reliably resolvable by OpenStreetMap/Census geocoding. This is the actual,
-// confirmed street address of the Lyndon B. Johnson National Historical Park visitor site.
-const EXAMPLE_ADDRESS = "199 Park Road 52, Stonewall, TX 78671";
+// for geocoding to work reliably. This specific address is confirmed working from real prior testing -
+// not a guess, since two earlier landmark-style addresses both failed to geocode.
+const EXAMPLE_ADDRESS = "5657 County Road 405, Grimes County, Texas, 77868, United States";
 document.getElementById("tryExampleLink").addEventListener("click", function(e){
   e.preventDefault();
   trackEvent("example-address-clicked");
