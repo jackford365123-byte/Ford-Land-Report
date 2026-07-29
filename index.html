@@ -668,6 +668,15 @@
         .finally(function(){ submitBtn.disabled = false; });
     });
   }
+
+  // Track every "Launch the Tool" / "Try It Free" click via Netlify's own analytics - see the matching
+  // note in land-report.html's trackEvent() for how this works. Check Site → Analytics → "Top resources
+  // not found" → /track/launch-tool-clicked for the real count.
+  document.querySelectorAll('a[href="land-report.html"]').forEach(function(el){
+    el.addEventListener("click", function(){
+      try { (new Image()).src = "/track/launch-tool-clicked"; } catch(e){}
+    });
+  });
 </script>
 
 </body>

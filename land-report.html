@@ -458,6 +458,25 @@ let lastGeneratedAddress = null;
 // exactly like a real visitor, until the code is entered again.
 let ownerUnlock = null;
 
+// Funnel tracking — uses Netlify's own Web Analytics, not Google Analytics or any external service.
+// Netlify counts every unique URL path requested from this site, even ones that don't correspond to a
+// real page (you've already seen this yourself in "Top resources not found," which counts 404s the
+// same way). This fires a tiny, invisible image request to a distinct path per funnel event — it 404s,
+// which is fine and expected, but the REQUEST is still logged and counted by Netlify regardless of the
+// 404 response. Check these paths in Netlify: Site → Analytics → "Top resources not found" — each one's
+// request count is literally how many times that funnel stage happened.
+// The four real funnel stages this tracks, and what each path means when you see it in the dashboard:
+//   /track/address-submitted        — someone typed an address and hit Generate Report
+//   /track/report-generated-free    — a free-tier report finished rendering
+//   /track/report-generated-single  — a paid single-report report finished rendering
+//   /track/report-generated-monthly — a paid monthly-tier report finished rendering
+//   /track/paywall-viewed           — the free tier rendered, meaning the pricing card was shown
+//   /track/buy-clicked-single       — someone clicked "Buy This Report"
+//   /track/buy-clicked-monthly      — someone clicked "Subscribe Monthly"
+function trackEvent(path){
+  try { (new Image()).src = "/track/" + path; } catch(e){}
+}
+
 function isPaid(currentAddress){
   if(!CONFIG.paywallEnabled) return true;
   if(ownerUnlock) return true;
@@ -593,6 +612,7 @@ function initAccessCodeLogin(){
     const el = document.getElementById(id);
     if(!el) return;
     el.addEventListener("click", function(){
+      trackEvent("buy-clicked-" + (id === "buySingleBtn" ? "single" : "monthly"));
       const addr = document.getElementById("addressInput").value.trim();
       if(addr){ try { localStorage.setItem("landreport_pending_address", addr); } catch(e){} }
     });
@@ -2451,6 +2471,7 @@ async function handleSubmit(e){
   e.preventDefault();
   const address = document.getElementById("addressInput").value.trim();
   if(!address) return;
+  trackEvent("address-submitted");
   const btn = document.getElementById("submitBtn");
   const errBox = document.getElementById("errorMsg");
   const results = document.getElementById("results");
@@ -3313,6 +3334,8 @@ async function handleSubmit(e){
     populatePrintTOC();
     convertSectionsToAccordions();
     results.insertAdjacentHTML("beforeend", tailHtml);
+    trackEvent("report-generated-" + (paid ? getTier() : "free"));
+    if(!paid) trackEvent("paywall-viewed");
     if(paid) markSingleReportUsedIfApplicable(geo.displayName);
     initMap(geo, paid && terrainRes.status === "fulfilled" ? terrainRes.value : null, paid ? sunToday : null, parcelSet, undefined, streamsRes.status === "fulfilled" ? streamsRes.value : [], paid);
     initCountyGisLink(geo);
