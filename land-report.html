@@ -353,6 +353,20 @@
   <textarea name="message"></textarea>
   <input type="text" name="bot-field" />
 </form>
+<!-- Separate form specifically for the free-tier "email me this report" capture - kept distinct from
+     the feedback form above since it's a different purpose (lead capture, not a message to read). -->
+<form name="report-followup" data-netlify="true" netlify-honeypot="bot-field" hidden>
+  <input type="email" name="email" />
+  <input type="text" name="property_address" />
+  <input type="text" name="bot-field" />
+</form>
+<!-- Fired silently in the background on every single address submission (free or paid, no user-facing
+     form) purely so the site owner can see what properties are actually getting looked up - a real,
+     reviewable list, not just a count. Nothing shown to the visitor; this happens invisibly. -->
+<form name="address-log" data-netlify="true" hidden>
+  <input type="text" name="address" />
+  <input type="text" name="tier" />
+</form>
 
 <div class="wrap">
   <div class="header">
@@ -371,6 +385,8 @@
     </div>
     <p id="errorMsg"></p>
   </form>
+
+  <p style="margin-top:10px;font-size:13px;"><a href="#" id="tryExampleLink">Not sure what to try? See a real example report &#8594;</a></p>
 
   <p style="margin-top:14px;" id="compareToggleWrap"><a href="#" id="compareToggleLink" style="font-size:13px;">Compare with another property &#8594;</a></p>
   <p style="margin-top:14px;font-size:13px;color:var(--ink-faint);display:none;" id="compareLockedNote">Property Comparison is part of the <a href="#" id="compareUpgradeLink">Unlimited Monthly plan</a> &#8594;</p>
@@ -2612,6 +2628,26 @@ async function handleSubmit(e){
 
     const paid = isPaid(geo.displayName);
 
+    // Email capture for free-tier visitors — the actual problem this solves: someone can generate a
+    // full free report, showing real interest, and then leave with zero way to ever reach them again.
+    // Positioned right after Property Identity (the very top of the report) so every free visitor sees
+    // it regardless of how far they scroll, not buried near the bottom where most people never reach.
+    if(!paid){
+      html += '<div class="card" style="background:linear-gradient(135deg, #FBF5E6, #FFFFFF); border:1px solid var(--accent); position:relative; overflow:hidden;">' +
+        '<div style="position:absolute;top:-60px;right:-60px;width:180px;height:180px;background:radial-gradient(circle,rgba(61,107,61,0.12),transparent 70%);pointer-events:none;"></div>' +
+        '<p class="eyebrow" style="margin-bottom:6px;position:relative;">Save This Report</p>' +
+        '<h3 style="font-size:19px;margin-bottom:8px;position:relative;">Want this emailed to you, plus a reminder when you\'re ready to unlock the rest?</h3>' +
+        '<p style="color:var(--ink-dim);font-size:13.5px;margin-bottom:16px;position:relative;">No spam \u2014 just this report and an occasional reminder, nothing else.</p>' +
+        '<form id="followupForm" style="position:relative;display:flex;gap:10px;flex-wrap:wrap;">' +
+          '<input type="email" name="email" id="followupEmail" placeholder="Your email" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:4px;background:#fff;border:1px solid var(--line);font-size:14px;">' +
+          '<input type="hidden" name="property_address" value="' + esc(geo.displayName) + '">' +
+          '<input type="text" name="bot-field" style="position:absolute;left:-9999px;" tabindex="-1" autocomplete="off">' +
+          '<button type="submit" class="btn" style="flex-shrink:0;">Email Me This Report</button>' +
+        '</form>' +
+        '<p id="followupStatus" style="display:none;font-size:13px;margin-top:10px;position:relative;"></p>' +
+      '</div>';
+    }
+
     html += sectionDivider("Topography, Hydrology & Flood");
 
     // Satellite map with real overlays — now renders for everyone. Basic public-data layers (parcel,
@@ -3336,10 +3372,12 @@ async function handleSubmit(e){
     results.insertAdjacentHTML("beforeend", tailHtml);
     trackEvent("report-generated-" + (paid ? getTier() : "free"));
     if(!paid) trackEvent("paywall-viewed");
+    logAddressSubmission(geo.displayName, paid ? getTier() : "free");
     if(paid) markSingleReportUsedIfApplicable(geo.displayName);
     initMap(geo, paid && terrainRes.status === "fulfilled" ? terrainRes.value : null, paid ? sunToday : null, parcelSet, undefined, streamsRes.status === "fulfilled" ? streamsRes.value : [], paid);
     initCountyGisLink(geo);
     initAccessCodeLogin();
+    initFollowupForm();
     if(paid){
       initSunMap(geo, sunToday, parcel);
       flushImageLoads();
@@ -4097,8 +4135,66 @@ window.addEventListener("beforeprint", function(){
 
 let wideAreaGroup = null;
 
+// Silently logs every successfully generated report's address to Netlify Forms in the background - no
+// user-facing UI, nothing shown to the visitor. This is purely so you can see, as a real reviewable
+// list (not just a count), which actual properties are getting looked up. Check it at Netlify → your
+// site → Forms → "address-log".
+function logAddressSubmission(address, tier){
+  try {
+    fetch("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: encodeFormData({ "form-name": "address-log", address: address, tier: tier }),
+    }).catch(function(){});
+  } catch(e){}
+}
+
 function encodeFormData(data){
   return Object.keys(data).map(function(k){ return encodeURIComponent(k) + "=" + encodeURIComponent(data[k]); }).join("&");
+}
+
+function initFollowupForm(){
+  const form = document.getElementById("followupForm");
+  if(!form) return;
+  const status = document.getElementById("followupStatus");
+
+  form.addEventListener("submit", function(e){
+    e.preventDefault();
+    const honeypot = form.querySelector('[name="bot-field"]').value;
+    if(honeypot){
+      status.style.display = "block";
+      status.style.color = "var(--accent-deep)";
+      status.textContent = "Sent \u2014 check your inbox shortly.";
+      form.reset();
+      return;
+    }
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Sending\u2026";
+    status.style.display = "none";
+
+    const formData = { "form-name": "report-followup" };
+    new FormData(form).forEach(function(value, key){ formData[key] = value; });
+
+    fetch("/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: encodeFormData(formData),
+    }).then(function(res){
+      if(!res.ok) throw new Error("Submission failed");
+      status.style.display = "block";
+      status.style.color = "var(--accent-deep)";
+      status.textContent = "Got it \u2014 you'll hear from us soon.";
+      submitBtn.textContent = "Sent \u2713";
+    }).catch(function(){
+      status.style.display = "block";
+      status.style.color = "var(--warn)";
+      status.textContent = "Something went wrong \u2014 you can reach us directly at support@fordlandreport.com instead.";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Email Me This Report";
+    });
+  });
 }
 
 function initInquiryForm(){
@@ -4309,6 +4405,19 @@ document.addEventListener("click", function(e){
 });
 
 document.getElementById("searchForm").addEventListener("submit", handleSubmit);
+
+// Example address quick-start — directly targets the biggest measured funnel leak: people who click
+// into the tool but don't try an address at all, likely because they don't have a specific one in mind
+// or are hesitant to type a real address into an unfamiliar new site. One tap removes both frictions.
+// EXAMPLE_ADDRESS is a real, clearly public location (not a private residence) - change this to
+// whatever address you'd prefer to showcase.
+const EXAMPLE_ADDRESS = "LBJ Ranch, Stonewall, TX";
+document.getElementById("tryExampleLink").addEventListener("click", function(e){
+  e.preventDefault();
+  trackEvent("example-address-clicked");
+  document.getElementById("addressInput").value = EXAMPLE_ADDRESS;
+  handleSubmit({ preventDefault: function(){} });
+});
 
 // The actual friction point in a redirect-only payment flow: someone pays, gets redirected back, and
 // lands on a blank search box despite having just been looking at a specific property. If they're
