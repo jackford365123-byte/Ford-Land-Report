@@ -2604,7 +2604,21 @@ async function handleSubmit(e){
     if(cached){
       ({ geo, elevationRes, slopeRes, floodRes, streamsRes, hardinessRes, terrainRes, parcelRes, climateRes, censusGeoRes, earthquakeRes, wellRes, historicalFireRes, oilGasRes, invasiveRes, emergencyRes, soilRes } = cached);
     } else {
-      geo = selectedSuggestion && selectedSuggestion.displayName === address ? selectedSuggestion : await geocodeAddress(address);
+      let usedManualFallback = false;
+      if(selectedSuggestion && selectedSuggestion.displayName === address){
+        geo = selectedSuggestion;
+      } else {
+        try {
+          geo = await geocodeAddress(address);
+        } catch(geocodeErr){
+          // Total failure (not just imprecise) - genuinely happens for some rural addresses that
+          // simply aren't in either free database, even when they're real and findable on Apple/Google
+          // Maps. Offer manual pin placement instead of a dead-end error with no path forward.
+          const manual = await manualPinFallback(address, geocodeErr.message);
+          geo = { lat: manual.lat, lon: manual.lon, displayName: address, county: "", state: "", zip: "", city: "" };
+          usedManualFallback = true;
+        }
+      }
       // If the geocoder didn't have a city/town/village for this address (common for rural addresses),
       // try Census's place-boundary data as a fallback before showing the confirmation step, so the
       // person sees the best available address rather than one missing its city.
@@ -2617,7 +2631,9 @@ async function handleSubmit(e){
           }
         } catch(e){}
       }
-      if(!isViewingExampleAddress){
+      // Skip re-confirming a location the person just manually placed a pin for - they already
+      // confirmed it by clicking "Use This Spot," so asking again would be redundant.
+      if(!isViewingExampleAddress && !usedManualFallback){
         const confirmed = await confirmLocation(geo);
         geo.lat = confirmed.lat;
         geo.lon = confirmed.lon;
@@ -3656,6 +3672,75 @@ function confirmLocation(geo){
       document.getElementById("addressInput").select();
       // Never resolves - the in-flight report generation for the wrong location is deliberately
       // abandoned here rather than continuing, since the person is about to try a different address.
+    });
+  });
+}
+
+// For when automatic geocoding fails completely (not just imprecisely) - confirmLocation above only
+// helps when a location was FOUND but might be wrong; this is for when nothing was found at all, which
+// genuinely happens for some rural addresses that simply aren't in either free database (confirmed
+// real, not just a bug: Apple/Google Maps can have an address that OpenStreetMap and Census both lack).
+// Rather than leaving the person stuck at a dead-end error, this lets them manually place a pin using
+// an external map as reference (Apple Maps, Google Maps) for the actual coordinates.
+function manualPinFallback(address, errorMessage){
+  return new Promise(function(resolve){
+    const results = document.getElementById("results");
+    results.innerHTML =
+      '<div class="card">' +
+        '<p class="eyebrow" style="margin-bottom:8px;color:var(--warn);">Automatic Lookup Failed</p>' +
+        '<p style="color:var(--ink-dim);font-size:13.5px;margin-bottom:14px;">' + esc(errorMessage) + '</p>' +
+        '<p style="color:var(--ink);font-size:14px;margin-bottom:4px;"><strong>You can still generate a report</strong> \u2014 open this address in Apple Maps or Google Maps, find the pin, then click that same spot on the map below.</p>' +
+        '<p style="color:var(--ink-faint);font-size:13px;margin-bottom:14px;">Click anywhere on the map to place a pin, then drag it to fine-tune.</p>' +
+        '<div id="manualPinMapContainer" style="width:100%;height:340px;border-radius:4px;border:1px solid var(--line);background:#EDE0C4;"></div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center;">' +
+          '<button type="button" id="useManualPinBtn" class="btn" disabled style="opacity:0.5;cursor:not-allowed;">Click The Map First</button>' +
+          '<button type="button" id="retryAddressBtn2" style="background:none;border:1px solid var(--line);color:var(--ink-dim);padding:11px 18px;border-radius:6px;font-size:13.5px;cursor:pointer;">Try a Different Address</button>' +
+        '</div>' +
+      '</div>';
+
+    let finalLat = null, finalLon = null;
+    let map = null, marker = null;
+    const useBtn = document.getElementById("useManualPinBtn");
+
+    function placeMarker(lat, lon){
+      finalLat = lat; finalLon = lon;
+      if(marker){ marker.setLatLng([lat, lon]); }
+      else {
+        marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+        marker.on("dragend", function(){ const pos = marker.getLatLng(); finalLat = pos.lat; finalLon = pos.lng; });
+      }
+      useBtn.disabled = false;
+      useBtn.style.opacity = "1";
+      useBtn.style.cursor = "pointer";
+      useBtn.textContent = "Use This Spot \u2014 Generate Report";
+    }
+
+    try {
+      // Default view centered on Texas, since that's this tool's primary market - a reasonable
+      // starting point for someone about to click their own location in anyway.
+      map = L.map("manualPinMapContainer", { zoomControl: true }).setView([31.0, -99.0], 6);
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        attribution: "Esri World Imagery", maxZoom: 19,
+      }).addTo(map);
+      map.on("click", function(e){ placeMarker(e.latlng.lat, e.latlng.lng); });
+      setTimeout(function(){ map.invalidateSize(); }, 150);
+    } catch(e){
+      results.innerHTML += '<p style="color:var(--warn);font-size:13px;margin-top:10px;">Map failed to load (network issue) \u2014 please try again in a moment.</p>';
+    }
+
+    useBtn.addEventListener("click", function(){
+      if(finalLat === null) return;
+      resolve({ lat: finalLat, lon: finalLon });
+    });
+    document.getElementById("retryAddressBtn2").addEventListener("click", function(){
+      results.innerHTML = "";
+      const btn = document.getElementById("submitBtn");
+      btn.disabled = false;
+      btn.textContent = "Generate Report";
+      document.getElementById("addressInput").focus();
+      document.getElementById("addressInput").select();
+      // Never resolves, same as confirmLocation's retry button - the person is trying a different
+      // address instead of continuing with this one.
     });
   });
 }
