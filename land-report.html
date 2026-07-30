@@ -2211,6 +2211,14 @@ async function findNearbyParcels(lat, lon, county, state, city, houseNumber){
             for(const key in attrs){
               if(/ADDR|SITUS|LOCATION/i.test(key) && typeof attrs[key] === "string" && attrs[key].length > 3){ addressGuess = attrs[key]; break; }
             }
+            if(addressGuess){
+              // Some counties' parcel data combines the owner's name and the address into a single
+              // field value ("FORD, JACK W & CARSYN H COPELAND 13576 PINEWOOD VILLAGE DR...") instead
+              // of keeping them separate. Since a real US address always starts with a house number,
+              // stripping everything before the first digit sequence removes any owner-name prefix
+              // while leaving a genuine address-only value completely unchanged.
+              addressGuess = addressGuess.replace(/^.*?(\d+\s)/, "$1").trim();
+            }
             return {
               rings: rings, bounds: polygonBounds(rings), acres: acres,
               distanceMiles: haversineMiles(lat, lon, centroid[0], centroid[1]),
