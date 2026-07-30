@@ -1102,7 +1102,7 @@ const WIND_BY_STATE = {
 const WIND_GENERIC = { fromDeg: 225, label: "southwest", note: "Most of the continental U.S. sits under prevailing westerly winds, though local terrain and fronts cause real variation. Confirm with a nearby NOAA station for precision." };
 
 // ---------------- API helpers ----------------
-function jsonpOnce(url, timeoutMs){
+function jsonp(url, timeoutMs){
   timeoutMs = timeoutMs || 8000;
   return new Promise(function(resolve, reject){
     const cb = "__jsonp_cb_" + Math.random().toString(36).slice(2);
@@ -1118,55 +1118,14 @@ function jsonpOnce(url, timeoutMs){
   });
 }
 
-// One automatic retry after a short delay for genuine network-level failures (script failed to load,
-// or timed out) - NOT for a clean "no results" response, since retrying that wouldn't help. Free public
-// APIs like Census's occasionally have a transient blip; a single quick retry resolves a meaningful
-// share of those without making a real "this address isn't in the database" case wait any longer than
-// it already would.
-async function jsonp(url, timeoutMs){
-  try {
-    return await jsonpOnce(url, timeoutMs);
-  } catch(firstErr){
-    await new Promise(function(r){ setTimeout(r, 600); });
-    return await jsonpOnce(url, timeoutMs);
-  }
-}
-
-// Builds a clean, traditional mailing-address format ("13576 Pinewood Village Drive, Conroe, Texas
-// 77302") from Nominatim's own structured address breakdown, instead of using its raw display_name
-// string - which is technically accurate but not how anyone actually writes an address: it puts a
-// comma between the house number and street name, often shows the county in place of the city
-// (especially for rural addresses, which is exactly this tool's core audience), and tacks "United
-// States" on the end. Tries several possible place-name fields since rural Nominatim data sometimes
-// has town/village/hamlet info but not "city" specifically.
-function formatTraditionalAddress(addr){
-  if(!addr) return "";
-  const houseAndStreet = [addr.house_number, addr.road].filter(Boolean).join(" ");
-  const place = addr.city || addr.town || addr.village || addr.hamlet || addr.suburb || addr.municipality || "";
-  const parts = [houseAndStreet || addr.road || "", place, addr.state].filter(Boolean);
-  let result = parts.join(", ");
-  if(addr.postcode) result += " " + addr.postcode;
-  return result || null; // null signals "couldn't build a clean version, fall back to display_name"
-}
-
 async function geocodeViaNominatim(address){
-  const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=us&q=" + encodeURIComponent(address);
-  let res;
-  try {
-    res = await fetch(url, { headers: { Accept: "application/json" } });
-    if(!res.ok) throw new Error("Nominatim returned status " + res.status);
-  } catch(firstErr){
-    // One retry for a genuine network/server-level failure - not for a clean "no results" response,
-    // which comes back as a successful, empty response rather than a thrown error.
-    await new Promise(function(r){ setTimeout(r, 600); });
-    res = await fetch(url, { headers: { Accept: "application/json" } });
-    if(!res.ok) throw new Error("Nominatim returned status " + res.status);
-  }
+  const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=" + encodeURIComponent(address);
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if(!res.ok) throw new Error("Nominatim returned status " + res.status);
   const data = await res.json();
   if(!data || data.length === 0) throw new Error("address not found");
   const r = data[0];
-  const clean = formatTraditionalAddress(r.address);
-  return { lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: clean || r.display_name,
+  return { lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: r.display_name,
     county: (r.address && r.address.county) || "", state: (r.address && r.address.state) || "", zip: (r.address && r.address.postcode) || "",
     city: (r.address && (r.address.city || r.address.town || r.address.village)) || "" };
 }
@@ -1177,10 +1136,7 @@ async function geocodeViaCensus(address){
   const match = data && data.result && data.result.addressMatches && data.result.addressMatches[0];
   if(!match) throw new Error("address not found in Census database");
   const comp = match.addressComponents || {};
-  // Census typically returns ALL CAPS ("13576 PINEWOOD VILLAGE DR, CONROE, TX, 77302") - title-casing
-  // it keeps the display consistent regardless of which geocoder happens to succeed for a given address.
-  const titleCased = (match.matchedAddress || "").toLowerCase().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
-  return { lat: match.coordinates.y, lon: match.coordinates.x, displayName: titleCased || match.matchedAddress, county: "", state: comp.state || "", zip: comp.zip || "" };
+  return { lat: match.coordinates.y, lon: match.coordinates.x, displayName: match.matchedAddress, county: "", state: comp.state || "", zip: comp.zip || "" };
 }
 
 async function getCountyViaCensus(lat, lon){
@@ -1189,28 +1145,6 @@ async function getCountyViaCensus(lat, lon){
   const counties = data && data.result && data.result.geographies && data.result.geographies["Counties"];
   if(!counties || !counties[0]) throw new Error("no county found");
   return { county: counties[0].NAME || "", state: counties[0].STATE_NAME || "" };
-}
-
-// Fallback for when Nominatim's structured address has no city/town/village at all - common for rural
-// addresses, which is exactly this tool's core audience. Tries Census's actual place-boundary layers
-// (incorporated cities first, then Census-designated places, then county subdivisions) rather than
-// falling back to showing the county name, which is the exact bug this whole thing fixes.
-// Honest limitation: this reflects real geographic/administrative boundaries, not USPS's separate
-// "preferred mailing city" convention - which is why a rural address can sometimes still not show a
-// city here even though mail addressed to it uses a nearby town's name. There's no free API for that
-// specific USPS convention; this is the closest reasonably achievable fix without one.
-async function getPlaceViaCensus(lat, lon){
-  const url = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=" + lon + "&y=" + lat +
-    "&benchmark=Public_AR_Current&vintage=Current_Current&layers=Incorporated Places,Census Designated Places,County Subdivisions&format=jsonp";
-  const data = await jsonp(url);
-  const geos = (data && data.result && data.result.geographies) || {};
-  const candidate = (geos["Incorporated Places"] && geos["Incorporated Places"][0]) ||
-    (geos["Census Designated Places"] && geos["Census Designated Places"][0]) ||
-    (geos["County Subdivisions"] && geos["County Subdivisions"][0]);
-  if(!candidate || !candidate.NAME) throw new Error("no place found");
-  // Census names often include a type suffix ("Conroe city", "Roans Prairie CDP") - strip it for a
-  // clean mailing-style city name.
-  return candidate.NAME.replace(/\s+(city|town|CDP|township|borough)$/i, "");
 }
 
 async function getCensusGeographies(lat, lon){
@@ -2574,11 +2508,7 @@ function errNote(msg, linkHref, linkLabel){
 
 async function handleSubmit(e){
   e.preventDefault();
-  // Copy-pasted addresses (especially from Zillow/Google, which is exactly how most people actually
-  // get an address into this field) often bring along line breaks, doubled spaces, or invisible
-  // formatting artifacts that don't show up visually but can confuse a geocoder expecting a single
-  // clean line. Collapsing to single spaces and trimming fixes this without touching what's displayed.
-  const address = document.getElementById("addressInput").value.replace(/\s+/g, " ").trim();
+  const address = document.getElementById("addressInput").value.trim();
   if(!address) return;
   isViewingExampleAddress = (typeof EXAMPLE_ADDRESS !== "undefined" && address.toLowerCase() === EXAMPLE_ADDRESS.trim().toLowerCase());
   trackEvent("address-submitted");
@@ -2604,40 +2534,7 @@ async function handleSubmit(e){
     if(cached){
       ({ geo, elevationRes, slopeRes, floodRes, streamsRes, hardinessRes, terrainRes, parcelRes, climateRes, censusGeoRes, earthquakeRes, wellRes, historicalFireRes, oilGasRes, invasiveRes, emergencyRes, soilRes } = cached);
     } else {
-      let usedManualFallback = false;
-      if(selectedSuggestion && selectedSuggestion.displayName === address){
-        geo = selectedSuggestion;
-      } else {
-        try {
-          geo = await geocodeAddress(address);
-        } catch(geocodeErr){
-          // Total failure (not just imprecise) - genuinely happens for some rural addresses that
-          // simply aren't in either free database, even when they're real and findable on Apple/Google
-          // Maps. Offer manual pin placement instead of a dead-end error with no path forward.
-          const manual = await manualPinFallback(address, geocodeErr.message);
-          geo = { lat: manual.lat, lon: manual.lon, displayName: address, county: "", state: "", zip: "", city: "" };
-          usedManualFallback = true;
-        }
-      }
-      // If the geocoder didn't have a city/town/village for this address (common for rural addresses),
-      // try Census's place-boundary data as a fallback before showing the confirmation step, so the
-      // person sees the best available address rather than one missing its city.
-      if(!geo.city){
-        try {
-          const place = await getPlaceViaCensus(geo.lat, geo.lon);
-          if(place && geo.state && geo.displayName.indexOf(place) === -1){
-            geo.city = place;
-            geo.displayName = geo.displayName.replace(", " + geo.state, ", " + place + ", " + geo.state);
-          }
-        } catch(e){}
-      }
-      // Skip re-confirming a location the person just manually placed a pin for - they already
-      // confirmed it by clicking "Use This Spot," so asking again would be redundant.
-      if(!isViewingExampleAddress && !usedManualFallback){
-        const confirmed = await confirmLocation(geo);
-        geo.lat = confirmed.lat;
-        geo.lon = confirmed.lon;
-      }
+      geo = selectedSuggestion && selectedSuggestion.displayName === address ? selectedSuggestion : await geocodeAddress(address);
       if(!geo.county){
         try { const c = await getCountyViaCensus(geo.lat, geo.lon); geo.county = c.county || geo.county; if(!geo.state) geo.state = c.state || geo.state; } catch(e){}
       }
@@ -3617,134 +3514,6 @@ function destPoint(lat, lon, bearingDeg, distMeters){
 }
 
 let mapInstance = null;
-
-// The actual fix for "I can never get the right house to pop up": free geocoders (this tool uses
-// OpenStreetMap/Census, since there's no budget for a paid precision geocoding API) are genuinely
-// less reliable for rural addresses specifically - exactly this tool's core audience - than they are
-// for dense urban addresses. Rather than silently trusting whatever the geocoder guessed, this shows
-// the pin on a real map and lets the person drag it to the actual correct spot before anything else
-// runs, the same way Zillow or Google Maps let you fine-tune a location. Returns a Promise that
-// resolves with the final {lat, lon} once confirmed - either the original geocoded position, or
-// wherever the pin got dragged to.
-function confirmLocation(geo){
-  return new Promise(function(resolve){
-    const results = document.getElementById("results");
-    results.innerHTML =
-      '<div class="card">' +
-        '<p class="eyebrow" style="margin-bottom:8px;">Confirm This Is The Right Spot</p>' +
-        '<p style="color:var(--ink-dim);font-size:14px;margin-bottom:4px;">We matched: <strong style="color:var(--ink);">' + esc(geo.displayName) + '</strong></p>' +
-        '<p style="color:var(--ink-faint);font-size:13px;margin-bottom:14px;">If the pin isn\'t on the right house, <strong style="color:var(--ink-dim);">drag it</strong> to the correct spot \u2014 free address lookup is genuinely less precise for rural properties, so this step actually matters here.</p>' +
-        '<div id="confirmMapContainer" style="width:100%;height:320px;border-radius:4px;border:1px solid var(--line);background:#EDE0C4;"></div>' +
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center;">' +
-          '<button type="button" id="confirmLocationBtn" class="btn">Looks Right \u2014 Generate Report</button>' +
-          '<button type="button" id="retryAddressBtn" style="background:none;border:1px solid var(--line);color:var(--ink-dim);padding:11px 18px;border-radius:6px;font-size:13.5px;cursor:pointer;">Try a Different Address</button>' +
-        '</div>' +
-      '</div>';
-
-    let finalLat = geo.lat, finalLon = geo.lon;
-    let map = null, marker = null;
-    try {
-      map = L.map("confirmMapContainer", { zoomControl: true }).setView([geo.lat, geo.lon], 17);
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-        attribution: "Esri World Imagery", maxZoom: 19,
-      }).addTo(map);
-      marker = L.marker([geo.lat, geo.lon], { draggable: true }).addTo(map);
-      marker.on("dragend", function(){
-        const pos = marker.getLatLng();
-        finalLat = pos.lat;
-        finalLon = pos.lng;
-      });
-      setTimeout(function(){ map.invalidateSize(); }, 150);
-    } catch(e){
-      // Map failed to load (network hiccup, etc.) - fall through and let the person confirm the
-      // geocoded position as-is rather than getting stuck with no way to proceed at all.
-    }
-
-    document.getElementById("confirmLocationBtn").addEventListener("click", function(){
-      resolve({ lat: finalLat, lon: finalLon });
-    });
-    document.getElementById("retryAddressBtn").addEventListener("click", function(){
-      results.innerHTML = "";
-      const btn = document.getElementById("submitBtn");
-      btn.disabled = false;
-      btn.textContent = "Generate Report";
-      document.getElementById("addressInput").focus();
-      document.getElementById("addressInput").select();
-      // Never resolves - the in-flight report generation for the wrong location is deliberately
-      // abandoned here rather than continuing, since the person is about to try a different address.
-    });
-  });
-}
-
-// For when automatic geocoding fails completely (not just imprecisely) - confirmLocation above only
-// helps when a location was FOUND but might be wrong; this is for when nothing was found at all, which
-// genuinely happens for some rural addresses that simply aren't in either free database (confirmed
-// real, not just a bug: Apple/Google Maps can have an address that OpenStreetMap and Census both lack).
-// Rather than leaving the person stuck at a dead-end error, this lets them manually place a pin using
-// an external map as reference (Apple Maps, Google Maps) for the actual coordinates.
-function manualPinFallback(address, errorMessage){
-  return new Promise(function(resolve){
-    const results = document.getElementById("results");
-    results.innerHTML =
-      '<div class="card">' +
-        '<p class="eyebrow" style="margin-bottom:8px;color:var(--warn);">Automatic Lookup Failed</p>' +
-        '<p style="color:var(--ink-dim);font-size:13.5px;margin-bottom:14px;">' + esc(errorMessage) + '</p>' +
-        '<p style="color:var(--ink);font-size:14px;margin-bottom:4px;"><strong>You can still generate a report</strong> \u2014 open this address in Apple Maps or Google Maps, find the pin, then click that same spot on the map below.</p>' +
-        '<p style="color:var(--ink-faint);font-size:13px;margin-bottom:14px;">Click anywhere on the map to place a pin, then drag it to fine-tune.</p>' +
-        '<div id="manualPinMapContainer" style="width:100%;height:340px;border-radius:4px;border:1px solid var(--line);background:#EDE0C4;"></div>' +
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center;">' +
-          '<button type="button" id="useManualPinBtn" class="btn" disabled style="opacity:0.5;cursor:not-allowed;">Click The Map First</button>' +
-          '<button type="button" id="retryAddressBtn2" style="background:none;border:1px solid var(--line);color:var(--ink-dim);padding:11px 18px;border-radius:6px;font-size:13.5px;cursor:pointer;">Try a Different Address</button>' +
-        '</div>' +
-      '</div>';
-
-    let finalLat = null, finalLon = null;
-    let map = null, marker = null;
-    const useBtn = document.getElementById("useManualPinBtn");
-
-    function placeMarker(lat, lon){
-      finalLat = lat; finalLon = lon;
-      if(marker){ marker.setLatLng([lat, lon]); }
-      else {
-        marker = L.marker([lat, lon], { draggable: true }).addTo(map);
-        marker.on("dragend", function(){ const pos = marker.getLatLng(); finalLat = pos.lat; finalLon = pos.lng; });
-      }
-      useBtn.disabled = false;
-      useBtn.style.opacity = "1";
-      useBtn.style.cursor = "pointer";
-      useBtn.textContent = "Use This Spot \u2014 Generate Report";
-    }
-
-    try {
-      // Default view centered on Texas, since that's this tool's primary market - a reasonable
-      // starting point for someone about to click their own location in anyway.
-      map = L.map("manualPinMapContainer", { zoomControl: true }).setView([31.0, -99.0], 6);
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-        attribution: "Esri World Imagery", maxZoom: 19,
-      }).addTo(map);
-      map.on("click", function(e){ placeMarker(e.latlng.lat, e.latlng.lng); });
-      setTimeout(function(){ map.invalidateSize(); }, 150);
-    } catch(e){
-      results.innerHTML += '<p style="color:var(--warn);font-size:13px;margin-top:10px;">Map failed to load (network issue) \u2014 please try again in a moment.</p>';
-    }
-
-    useBtn.addEventListener("click", function(){
-      if(finalLat === null) return;
-      resolve({ lat: finalLat, lon: finalLon });
-    });
-    document.getElementById("retryAddressBtn2").addEventListener("click", function(){
-      results.innerHTML = "";
-      const btn = document.getElementById("submitBtn");
-      btn.disabled = false;
-      btn.textContent = "Generate Report";
-      document.getElementById("addressInput").focus();
-      document.getElementById("addressInput").select();
-      // Never resolves, same as confirmLocation's retry button - the person is trying a different
-      // address instead of continuing with this one.
-    });
-  });
-}
-
 function initMap(geo, terrain, sunToday, parcelSet, initialIndex, streams, paid){
   if(typeof L === "undefined"){
     document.getElementById("mapContainer").innerHTML = '<div style="padding:20px;color:var(--warn);font-size:13px;">Map library failed to load (network issue). <a href="https://www.google.com/maps/@' + geo.lat + ',' + geo.lon + ',18z/data=!3m1!1e3" target="_blank" rel="noreferrer">View satellite imagery on Google Maps instead &#8599;</a></div>';
@@ -4608,7 +4377,7 @@ function renderSuggestions(list){
   suggestActiveIndex = -1;
   if(!list || list.length === 0){ box.classList.remove("open"); box.innerHTML = ""; return; }
   box.innerHTML = list.map(function(r, i){
-    return '<div class="suggestItem" data-idx="' + i + '">' + esc(formatTraditionalAddress(r.address) || r.display_name) + '</div>';
+    return '<div class="suggestItem" data-idx="' + i + '">' + esc(r.display_name) + '</div>';
   }).join('');
   box.classList.add("open");
   Array.from(box.querySelectorAll(".suggestItem")).forEach(function(el){
@@ -4622,10 +4391,9 @@ function renderSuggestions(list){
 function pickSuggestion(idx){
   const r = suggestItems[idx];
   if(!r) return;
-  const clean = formatTraditionalAddress(r.address) || r.display_name;
-  document.getElementById("addressInput").value = clean;
+  document.getElementById("addressInput").value = r.display_name;
   selectedSuggestion = {
-    lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: clean,
+    lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: r.display_name,
     county: (r.address && r.address.county) || "", state: (r.address && r.address.state) || "", zip: (r.address && r.address.postcode) || "",
   };
   document.getElementById("suggestBox").classList.remove("open");
