@@ -1,0 +1,5 @@
+# Establishes one authoritative URL for the report tool - a real 301 redirect is a much stronger
+# signal to Google than a canonical tag alone, since it actually eliminates the duplicate URL rather
+# than just hinting which one to prefer. Standardizing on the clean URL (no .html) since that's
+# generally considered better practice, and matches what internal links now point to directly.
+/land-report.html   /land-report   301!

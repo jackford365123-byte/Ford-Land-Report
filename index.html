@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Land Report — Ford Stewardship</title>
+<title>Ford Land Report | Know Before You Buy Rural Land</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <meta name="description" content="An instant land report for any U.S. address — flood zone, hydrology, climate, soil, and land-use guidance from public data, in one place.">
-<meta property="og:title" content="Land Report — Ford Stewardship">
+<meta property="og:title" content="Ford Land Report | Know Before You Buy Rural Land">
 <meta property="og:description" content="Know exactly what you're buying, before you buy it. Real public data, compiled into one report, for any U.S. address.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://fordlandreport.com/">
@@ -16,7 +16,7 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Land Report — Ford Stewardship">
+<meta name="twitter:title" content="Ford Land Report | Know Before You Buy Rural Land">
 <meta name="twitter:description" content="Know exactly what you're buying, before you buy it. Real public data, compiled into one report, for any U.S. address.">
 <meta name="twitter:image" content="https://fordlandreport.com/og-preview.jpg">
 <link rel="canonical" href="https://fordlandreport.com/"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23F7F1E3' stroke='%233F6B3F' stroke-width='1.3'/%3E%3Cpath d='M6 17c3.5-2.5 6-2.5 10 0s6.5 2.5 10 0' stroke='%233F6B3F' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -294,6 +294,15 @@
   }
 }
 </script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Ford Land Report",
+  "alternateName": ["FordLandReport", "Ford Stewardship"],
+  "url": "https://fordlandreport.com/"
+}
+</script>
 </head>
 <body>
 
@@ -323,7 +332,7 @@
         <a href="#pricing">Pricing</a>
         <a href="#feedback">Feedback</a>
       </div>
-      <a class="btn" href="land-report.html">Launch the Tool &#8594;</a>
+      <a class="btn" href="land-report">Launch the Tool &#8594;</a>
     </nav>
   </header>
 
@@ -340,7 +349,7 @@
       <h1 class="reveal in d1">Know exactly what you're<br>buying, <em>before you buy it.</em></h1>
       <p class="lede reveal in d2">Flood zone, hydrology, climate, soil, and land-use guidance — pulled from real public data sources and compiled into one report, in seconds, for any address in the country.</p>
       <div class="actions reveal in d3">
-        <a class="btn lg magnetic" href="land-report.html">Try It Free &#8594;</a>
+        <a class="btn lg magnetic" href="land-report">Try It Free &#8594;</a>
         <a class="btn ghost lg magnetic" href="#who">Who It's For</a>
       </div>
       <p class="microcopy reveal in d4">No account. No credit card. Just an address.</p>
@@ -513,7 +522,7 @@
           <p style="font-size:12.5px;color:var(--accent-deep);font-weight:600;margin-top:14px;margin-bottom:0;">See full pricing &amp; checkout &#8594;</p>
         </a>
       </div>
-      <p class="pricingNote reveal d2"><a href="land-report.html">Launch the tool</a> and search any address to see the free preview first.</p>
+      <p class="pricingNote reveal d2"><a href="land-report">Launch the tool</a> and search any address to see the free preview first.</p>
     </div>
   </section>
 
@@ -545,7 +554,7 @@
           <div class="word">Ford Stewardship</div>
         </div>
         <div class="footer-links">
-          <a href="land-report.html">Launch Tool</a>
+          <a href="land-report">Launch Tool</a>
           <a href="#pricing">Pricing</a>
           <a href="mailto:support@fordlandreport.com?subject=Land%20Report%20Feedback">Feedback</a>
           <a href="legal.html">Terms &amp; Privacy</a>
@@ -711,7 +720,7 @@
   // Track every "Launch the Tool" / "Try It Free" click via Netlify's own analytics - see the matching
   // note in land-report.html's trackEvent() for how this works. Check Site → Analytics → "Top resources
   // not found" → /track/launch-tool-clicked for the real count.
-  document.querySelectorAll('a[href="land-report.html"]').forEach(function(el){
+  document.querySelectorAll('a[href="land-report"]').forEach(function(el){
     el.addEventListener("click", function(){
       try { (new Image()).src = "/track/launch-tool-clicked"; } catch(e){}
     });
