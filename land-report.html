@@ -1118,6 +1118,23 @@ function jsonp(url, timeoutMs){
   });
 }
 
+// Builds a clean, traditional mailing-address format ("13576 Pinewood Village Drive, Conroe, Texas
+// 77302") from Nominatim's own structured address breakdown, instead of using its raw display_name
+// string - which is technically accurate but not how anyone actually writes an address: it puts a
+// comma between the house number and street name, often shows the county in place of the city
+// (especially for rural addresses, which is exactly this tool's core audience), and tacks "United
+// States" on the end. Tries several possible place-name fields since rural Nominatim data sometimes
+// has town/village/hamlet info but not "city" specifically.
+function formatTraditionalAddress(addr){
+  if(!addr) return "";
+  const houseAndStreet = [addr.house_number, addr.road].filter(Boolean).join(" ");
+  const place = addr.city || addr.town || addr.village || addr.hamlet || addr.suburb || addr.municipality || "";
+  const parts = [houseAndStreet || addr.road || "", place, addr.state].filter(Boolean);
+  let result = parts.join(", ");
+  if(addr.postcode) result += " " + addr.postcode;
+  return result || null; // null signals "couldn't build a clean version, fall back to display_name"
+}
+
 async function geocodeViaNominatim(address){
   const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=us&q=" + encodeURIComponent(address);
   const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -1125,7 +1142,8 @@ async function geocodeViaNominatim(address){
   const data = await res.json();
   if(!data || data.length === 0) throw new Error("address not found");
   const r = data[0];
-  return { lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: r.display_name,
+  const clean = formatTraditionalAddress(r.address);
+  return { lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: clean || r.display_name,
     county: (r.address && r.address.county) || "", state: (r.address && r.address.state) || "", zip: (r.address && r.address.postcode) || "",
     city: (r.address && (r.address.city || r.address.town || r.address.village)) || "" };
 }
@@ -1136,7 +1154,10 @@ async function geocodeViaCensus(address){
   const match = data && data.result && data.result.addressMatches && data.result.addressMatches[0];
   if(!match) throw new Error("address not found in Census database");
   const comp = match.addressComponents || {};
-  return { lat: match.coordinates.y, lon: match.coordinates.x, displayName: match.matchedAddress, county: "", state: comp.state || "", zip: comp.zip || "" };
+  // Census typically returns ALL CAPS ("13576 PINEWOOD VILLAGE DR, CONROE, TX, 77302") - title-casing
+  // it keeps the display consistent regardless of which geocoder happens to succeed for a given address.
+  const titleCased = (match.matchedAddress || "").toLowerCase().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+  return { lat: match.coordinates.y, lon: match.coordinates.x, displayName: titleCased || match.matchedAddress, county: "", state: comp.state || "", zip: comp.zip || "" };
 }
 
 async function getCountyViaCensus(lat, lon){
@@ -1145,6 +1166,28 @@ async function getCountyViaCensus(lat, lon){
   const counties = data && data.result && data.result.geographies && data.result.geographies["Counties"];
   if(!counties || !counties[0]) throw new Error("no county found");
   return { county: counties[0].NAME || "", state: counties[0].STATE_NAME || "" };
+}
+
+// Fallback for when Nominatim's structured address has no city/town/village at all - common for rural
+// addresses, which is exactly this tool's core audience. Tries Census's actual place-boundary layers
+// (incorporated cities first, then Census-designated places, then county subdivisions) rather than
+// falling back to showing the county name, which is the exact bug this whole thing fixes.
+// Honest limitation: this reflects real geographic/administrative boundaries, not USPS's separate
+// "preferred mailing city" convention - which is why a rural address can sometimes still not show a
+// city here even though mail addressed to it uses a nearby town's name. There's no free API for that
+// specific USPS convention; this is the closest reasonably achievable fix without one.
+async function getPlaceViaCensus(lat, lon){
+  const url = "https://geocoding.geo.census.gov/geocoder/geographies/coordinates?x=" + lon + "&y=" + lat +
+    "&benchmark=Public_AR_Current&vintage=Current_Current&layers=Incorporated Places,Census Designated Places,County Subdivisions&format=jsonp";
+  const data = await jsonp(url);
+  const geos = (data && data.result && data.result.geographies) || {};
+  const candidate = (geos["Incorporated Places"] && geos["Incorporated Places"][0]) ||
+    (geos["Census Designated Places"] && geos["Census Designated Places"][0]) ||
+    (geos["County Subdivisions"] && geos["County Subdivisions"][0]);
+  if(!candidate || !candidate.NAME) throw new Error("no place found");
+  // Census names often include a type suffix ("Conroe city", "Roans Prairie CDP") - strip it for a
+  // clean mailing-style city name.
+  return candidate.NAME.replace(/\s+(city|town|CDP|township|borough)$/i, "");
 }
 
 async function getCensusGeographies(lat, lon){
@@ -2539,6 +2582,18 @@ async function handleSubmit(e){
       ({ geo, elevationRes, slopeRes, floodRes, streamsRes, hardinessRes, terrainRes, parcelRes, climateRes, censusGeoRes, earthquakeRes, wellRes, historicalFireRes, oilGasRes, invasiveRes, emergencyRes, soilRes } = cached);
     } else {
       geo = selectedSuggestion && selectedSuggestion.displayName === address ? selectedSuggestion : await geocodeAddress(address);
+      // If the geocoder didn't have a city/town/village for this address (common for rural addresses),
+      // try Census's place-boundary data as a fallback before showing the confirmation step, so the
+      // person sees the best available address rather than one missing its city.
+      if(!geo.city){
+        try {
+          const place = await getPlaceViaCensus(geo.lat, geo.lon);
+          if(place && geo.state && geo.displayName.indexOf(place) === -1){
+            geo.city = place;
+            geo.displayName = geo.displayName.replace(", " + geo.state, ", " + place + ", " + geo.state);
+          }
+        } catch(e){}
+      }
       if(!isViewingExampleAddress){
         const confirmed = await confirmLocation(geo);
         geo.lat = confirmed.lat;
@@ -4445,7 +4500,7 @@ function renderSuggestions(list){
   suggestActiveIndex = -1;
   if(!list || list.length === 0){ box.classList.remove("open"); box.innerHTML = ""; return; }
   box.innerHTML = list.map(function(r, i){
-    return '<div class="suggestItem" data-idx="' + i + '">' + esc(r.display_name) + '</div>';
+    return '<div class="suggestItem" data-idx="' + i + '">' + esc(formatTraditionalAddress(r.address) || r.display_name) + '</div>';
   }).join('');
   box.classList.add("open");
   Array.from(box.querySelectorAll(".suggestItem")).forEach(function(el){
@@ -4459,9 +4514,10 @@ function renderSuggestions(list){
 function pickSuggestion(idx){
   const r = suggestItems[idx];
   if(!r) return;
-  document.getElementById("addressInput").value = r.display_name;
+  const clean = formatTraditionalAddress(r.address) || r.display_name;
+  document.getElementById("addressInput").value = clean;
   selectedSuggestion = {
-    lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: r.display_name,
+    lat: parseFloat(r.lat), lon: parseFloat(r.lon), displayName: clean,
     county: (r.address && r.address.county) || "", state: (r.address && r.address.state) || "", zip: (r.address && r.address.postcode) || "",
   };
   document.getElementById("suggestBox").classList.remove("open");
