@@ -1102,7 +1102,7 @@ const WIND_BY_STATE = {
 const WIND_GENERIC = { fromDeg: 225, label: "southwest", note: "Most of the continental U.S. sits under prevailing westerly winds, though local terrain and fronts cause real variation. Confirm with a nearby NOAA station for precision." };
 
 // ---------------- API helpers ----------------
-function jsonp(url, timeoutMs){
+function jsonpOnce(url, timeoutMs){
   timeoutMs = timeoutMs || 8000;
   return new Promise(function(resolve, reject){
     const cb = "__jsonp_cb_" + Math.random().toString(36).slice(2);
@@ -1116,6 +1116,20 @@ function jsonp(url, timeoutMs){
     script.src = url + sep + "callback=" + cb;
     document.head.appendChild(script);
   });
+}
+
+// One automatic retry after a short delay for genuine network-level failures (script failed to load,
+// or timed out) - NOT for a clean "no results" response, since retrying that wouldn't help. Free public
+// APIs like Census's occasionally have a transient blip; a single quick retry resolves a meaningful
+// share of those without making a real "this address isn't in the database" case wait any longer than
+// it already would.
+async function jsonp(url, timeoutMs){
+  try {
+    return await jsonpOnce(url, timeoutMs);
+  } catch(firstErr){
+    await new Promise(function(r){ setTimeout(r, 600); });
+    return await jsonpOnce(url, timeoutMs);
+  }
 }
 
 // Builds a clean, traditional mailing-address format ("13576 Pinewood Village Drive, Conroe, Texas
@@ -1137,8 +1151,17 @@ function formatTraditionalAddress(addr){
 
 async function geocodeViaNominatim(address){
   const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=us&q=" + encodeURIComponent(address);
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if(!res.ok) throw new Error("Nominatim returned status " + res.status);
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+    if(!res.ok) throw new Error("Nominatim returned status " + res.status);
+  } catch(firstErr){
+    // One retry for a genuine network/server-level failure - not for a clean "no results" response,
+    // which comes back as a successful, empty response rather than a thrown error.
+    await new Promise(function(r){ setTimeout(r, 600); });
+    res = await fetch(url, { headers: { Accept: "application/json" } });
+    if(!res.ok) throw new Error("Nominatim returned status " + res.status);
+  }
   const data = await res.json();
   if(!data || data.length === 0) throw new Error("address not found");
   const r = data[0];
