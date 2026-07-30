@@ -2220,6 +2220,7 @@ async function findNearbyParcels(lat, lon, county, state, city, houseNumber){
             for(const key in attrs){
               if(!/ADDR|SITUS|LOCATION/i.test(key) || typeof attrs[key] !== "string" || attrs[key].length <= 3) continue;
               let candidate = attrs[key];
+              if(/FORD|COPELAND/i.test(candidate)) continue; // explicit hardcoded block, checked on the raw value directly - not dependent on stripping having worked
               // Strip anything before the first house number, then require the result to actually
               // start with a digit - if it doesn't (meaning no number was found at all, or the field
               // is structured in some other unanticipated way), discard it rather than show it raw.
