@@ -1119,7 +1119,7 @@ function jsonp(url, timeoutMs){
 }
 
 async function geocodeViaNominatim(address){
-  const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=" + encodeURIComponent(address);
+  const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&countrycodes=us&q=" + encodeURIComponent(address);
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if(!res.ok) throw new Error("Nominatim returned status " + res.status);
   const data = await res.json();
@@ -2508,7 +2508,11 @@ function errNote(msg, linkHref, linkLabel){
 
 async function handleSubmit(e){
   e.preventDefault();
-  const address = document.getElementById("addressInput").value.trim();
+  // Copy-pasted addresses (especially from Zillow/Google, which is exactly how most people actually
+  // get an address into this field) often bring along line breaks, doubled spaces, or invisible
+  // formatting artifacts that don't show up visually but can confuse a geocoder expecting a single
+  // clean line. Collapsing to single spaces and trimming fixes this without touching what's displayed.
+  const address = document.getElementById("addressInput").value.replace(/\s+/g, " ").trim();
   if(!address) return;
   isViewingExampleAddress = (typeof EXAMPLE_ADDRESS !== "undefined" && address.toLowerCase() === EXAMPLE_ADDRESS.trim().toLowerCase());
   trackEvent("address-submitted");
@@ -2535,6 +2539,11 @@ async function handleSubmit(e){
       ({ geo, elevationRes, slopeRes, floodRes, streamsRes, hardinessRes, terrainRes, parcelRes, climateRes, censusGeoRes, earthquakeRes, wellRes, historicalFireRes, oilGasRes, invasiveRes, emergencyRes, soilRes } = cached);
     } else {
       geo = selectedSuggestion && selectedSuggestion.displayName === address ? selectedSuggestion : await geocodeAddress(address);
+      if(!isViewingExampleAddress){
+        const confirmed = await confirmLocation(geo);
+        geo.lat = confirmed.lat;
+        geo.lon = confirmed.lon;
+      }
       if(!geo.county){
         try { const c = await getCountyViaCensus(geo.lat, geo.lon); geo.county = c.county || geo.county; if(!geo.state) geo.state = c.state || geo.state; } catch(e){}
       }
@@ -3514,6 +3523,64 @@ function destPoint(lat, lon, bearingDeg, distMeters){
 }
 
 let mapInstance = null;
+
+// The actual fix for "I can never get the right house to pop up": free geocoders (this tool uses
+// OpenStreetMap/Census, since there's no budget for a paid precision geocoding API) are genuinely
+// less reliable for rural addresses specifically - exactly this tool's core audience - than they are
+// for dense urban addresses. Rather than silently trusting whatever the geocoder guessed, this shows
+// the pin on a real map and lets the person drag it to the actual correct spot before anything else
+// runs, the same way Zillow or Google Maps let you fine-tune a location. Returns a Promise that
+// resolves with the final {lat, lon} once confirmed - either the original geocoded position, or
+// wherever the pin got dragged to.
+function confirmLocation(geo){
+  return new Promise(function(resolve){
+    const results = document.getElementById("results");
+    results.innerHTML =
+      '<div class="card">' +
+        '<p class="eyebrow" style="margin-bottom:8px;">Confirm This Is The Right Spot</p>' +
+        '<p style="color:var(--ink-dim);font-size:14px;margin-bottom:4px;">We matched: <strong style="color:var(--ink);">' + esc(geo.displayName) + '</strong></p>' +
+        '<p style="color:var(--ink-faint);font-size:13px;margin-bottom:14px;">If the pin isn\'t on the right house, <strong style="color:var(--ink-dim);">drag it</strong> to the correct spot \u2014 free address lookup is genuinely less precise for rural properties, so this step actually matters here.</p>' +
+        '<div id="confirmMapContainer" style="width:100%;height:320px;border-radius:4px;border:1px solid var(--line);background:#EDE0C4;"></div>' +
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center;">' +
+          '<button type="button" id="confirmLocationBtn" class="btn">Looks Right \u2014 Generate Report</button>' +
+          '<button type="button" id="retryAddressBtn" style="background:none;border:1px solid var(--line);color:var(--ink-dim);padding:11px 18px;border-radius:6px;font-size:13.5px;cursor:pointer;">Try a Different Address</button>' +
+        '</div>' +
+      '</div>';
+
+    let finalLat = geo.lat, finalLon = geo.lon;
+    let map = null, marker = null;
+    try {
+      map = L.map("confirmMapContainer", { zoomControl: true }).setView([geo.lat, geo.lon], 17);
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        attribution: "Esri World Imagery", maxZoom: 19,
+      }).addTo(map);
+      marker = L.marker([geo.lat, geo.lon], { draggable: true }).addTo(map);
+      marker.on("dragend", function(){
+        const pos = marker.getLatLng();
+        finalLat = pos.lat;
+        finalLon = pos.lng;
+      });
+      setTimeout(function(){ map.invalidateSize(); }, 150);
+    } catch(e){
+      // Map failed to load (network hiccup, etc.) - fall through and let the person confirm the
+      // geocoded position as-is rather than getting stuck with no way to proceed at all.
+    }
+
+    document.getElementById("confirmLocationBtn").addEventListener("click", function(){
+      resolve({ lat: finalLat, lon: finalLon });
+    });
+    document.getElementById("retryAddressBtn").addEventListener("click", function(){
+      results.innerHTML = "";
+      const btn = document.getElementById("submitBtn");
+      btn.disabled = false;
+      btn.textContent = "Generate Report";
+      document.getElementById("addressInput").focus();
+      document.getElementById("addressInput").select();
+      // Never resolves - the in-flight report generation for the wrong location is deliberately
+      // abandoned here rather than continuing, since the person is about to try a different address.
+    });
+  });
+}
 
 function initMap(geo, terrain, sunToday, parcelSet, initialIndex, streams, paid){
   if(typeof L === "undefined"){
