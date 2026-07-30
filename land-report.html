@@ -2202,6 +2202,15 @@ async function findNearbyParcels(lat, lon, county, state, city, houseNumber){
           const features = (qData.features || []).filter(function(f){ return f.geometry && f.geometry.rings && f.geometry.rings[0] && f.geometry.rings[0].length > 2; });
           if(features.length === 0) continue;
 
+          // Detects a "LASTNAME, FIRSTNAME MIDDLE" style personal-name pattern anywhere in a string -
+          // some counties' parcel data combines the owner's name into the same field as the address
+          // (confirmed real, not hypothetical: Montgomery County, TX does this). This is checked against
+          // every candidate field's value, not just used to trim a known prefix, since trusting one
+          // exact position risks still exposing a name if the county's actual format varies even
+          // slightly from what's been seen so far.
+          function containsNameLikePattern(s){
+            return /\b[A-Z]{2,}(?:\s[A-Z]{1,}){0,3},\s*[A-Z]/.test(s);
+          }
           const parcels = features.map(function(f){
             const rings = f.geometry.rings;
             const centroid = ringCentroid(rings[0]);
@@ -2209,15 +2218,16 @@ async function findNearbyParcels(lat, lon, county, state, city, houseNumber){
             const attrs = f.attributes || {};
             let addressGuess = null;
             for(const key in attrs){
-              if(/ADDR|SITUS|LOCATION/i.test(key) && typeof attrs[key] === "string" && attrs[key].length > 3){ addressGuess = attrs[key]; break; }
-            }
-            if(addressGuess){
-              // Some counties' parcel data combines the owner's name and the address into a single
-              // field value ("FORD, JACK W & CARSYN H COPELAND 13576 PINEWOOD VILLAGE DR...") instead
-              // of keeping them separate. Since a real US address always starts with a house number,
-              // stripping everything before the first digit sequence removes any owner-name prefix
-              // while leaving a genuine address-only value completely unchanged.
-              addressGuess = addressGuess.replace(/^.*?(\d+\s)/, "$1").trim();
+              if(!/ADDR|SITUS|LOCATION/i.test(key) || typeof attrs[key] !== "string" || attrs[key].length <= 3) continue;
+              let candidate = attrs[key];
+              // Strip anything before the first house number, then require the result to actually
+              // start with a digit - if it doesn't (meaning no number was found at all, or the field
+              // is structured in some other unanticipated way), discard it rather than show it raw.
+              const stripped = candidate.replace(/^.*?(\d+\s)/, "$1").trim();
+              if(!/^\d/.test(stripped)) continue;
+              if(containsNameLikePattern(stripped)) continue; // still looks name-like even after stripping - discard entirely, don't guess further
+              addressGuess = stripped;
+              break;
             }
             return {
               rings: rings, bounds: polygonBounds(rings), acres: acres,
