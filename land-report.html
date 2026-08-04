@@ -1979,9 +1979,23 @@ function getRotationPlantingIncome(bucket, acres){
 
 // Hunting lease - genuinely one of the most overlooked revenue streams for exactly this kind of rural
 // property, especially in Texas. General per-acre/year range for a habitat/wildlife lease.
+// Hunting lease - modeled as per-hunter annual dues, since that's genuinely how most Texas hunting
+// leases actually work (a "lease club" of several hunters each paying dues), not a single flat fee to
+// one lessee. ~125 acres/hunter is a reasonable middle-of-range density guideline for a quality deer
+// lease with room for each hunter to actually hunt without crowding; real density varies with game
+// population and lease quality. Small acreage genuinely can't support even one hunter at this density -
+// handled honestly below rather than showing a misleadingly small number.
 function getHuntingLeaseIncome(acres){
   if(!acres) return null;
-  return { lowRevenue: Math.round(acres * 8), highRevenue: Math.round(acres * 25) };
+  const maxHunters = Math.floor(acres / 125);
+  if(maxHunters < 1){
+    return { viable: false, acresPerHunter: 125 };
+  }
+  const perHunterRange = [500, 1500]; // typical annual per-hunter dues range for a quality TX deer lease
+  return {
+    viable: true, maxHunters: maxHunters, perHunterRange: perHunterRange, acresPerHunter: 125,
+    lowRevenue: maxHunters * perHunterRange[0], highRevenue: maxHunters * perHunterRange[1],
+  };
 }
 
 // Solar lease - ties to acreage only (this report's solar EXPOSURE data is about siting a home/panels
@@ -3232,96 +3246,6 @@ async function handleSubmit(e){
       );
     }
 
-    // Income Potential — every number here is a general planning range built from this property's
-    // real acreage and real measured rainfall, run through standard agricultural/lease-rate rules of
-    // thumb. Explicitly not a business plan or a promise: actual results depend enormously on
-    // management, market timing, and capital invested, not just the land itself.
-    (function(){
-      const hay = (parcelAcres && climate) ? getHayIncome(parcelAcres, climate.avgAnnualRainfallIn) : null;
-      const livestockIncome = capacity ? getLivestockIncome(capacity) : null;
-      const cropList = parcelAcres ? CASH_CROPS_BY_BUCKET[bucket] : null;
-      const huntLease = parcelAcres ? getHuntingLeaseIncome(parcelAcres) : null;
-      const solarLease = parcelAcres ? getSolarLeaseIncome(parcelAcres) : null;
-      const crp = parcelAcres ? getCRPEstimate(parcelAcres) : null;
-      const startup = parcelAcres ? getStartupCostEstimate(parcelAcres) : null;
-
-      if(!parcelAcres){
-        html += card("&#128176;", "Income Potential",
-          errNote("Can't estimate income potential without a confirmed parcel acreage (no parcel boundary was matched for this address).")
-        );
-        return;
-      }
-
-      let body = '<span class="tag">Computed from real acreage (\u2248' + parcelAcres.toFixed(1) + ' ac) and real measured rainfall \u2014 general planning ranges, not live market prices or a guarantee</span>';
-
-      body += '<p style="margin-top:14px;margin-bottom:6px;font-weight:600;color:var(--ink);">Hay Production</p>';
-      if(hay && hay.viable){
-        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(hay.lowRevenue, hay.highRevenue) + '</div><div class="label">Gross Revenue/yr (' + hay.lowBales + '\u2013' + hay.highBales + ' round bales)</div></div>' +
-        '</div>' +
-        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Typical yields for this rainfall, before equipment, fuel, and labor costs.</p>';
-      } else if(hay){
-        body += '<p style="font-size:13.5px;color:var(--ink-dim);">Rainfall here is low enough that unirrigated hay production usually isn\'t viable at meaningful scale \u2014 irrigation would change this significantly.</p>';
-      }
-
-      if(livestockIncome){
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Continuous Grazing</p>';
-        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.cattle.lowRevenue, livestockIncome.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + livestockIncome.cattle.unitsSold + ' calves/yr)</div></div>' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.goats.lowRevenue, livestockIncome.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + livestockIncome.goats.unitsSold + ' kids/yr)</div></div>' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.sheep.lowRevenue, livestockIncome.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + livestockIncome.sheep.unitsSold + ' lambs/yr)</div></div>' +
-        '</div>' +
-        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One species at a time \u2014 these are alternatives, not additive. Gross revenue before feed, vet, and mineral costs. Livestock prices are genuinely volatile year to year \u2014 treat this as scale, not a forecast.</p>';
-
-        const rotationalLivestock = getRotationalLivestockIncome(livestockIncome);
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Rotationally Grazed</p>';
-        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.cattle.lowRevenue, rotationalLivestock.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + rotationalLivestock.cattle.unitsSold + ' calves/yr)</div></div>' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.goats.lowRevenue, rotationalLivestock.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + rotationalLivestock.goats.unitsSold + ' kids/yr)</div></div>' +
-          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.sheep.lowRevenue, rotationalLivestock.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + rotationalLivestock.sheep.unitsSold + ' lambs/yr)</div></div>' +
-        '</div>' +
-        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Moving animals frequently between paddocks so forage recovers between grazing periods can meaningfully increase carrying capacity above continuous grazing \u2014 often cited in the 1.5\u20132x range with skilled management. This depends far more on management skill and fencing/water infrastructure investment than on the land itself; treat this as the ceiling of what\'s achievable, not a starting expectation.</p>';
-      }
-
-      if(cropList){
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Single Crop</p>' +
-          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-          cropList.map(function(c){
-            return '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(c.perAcre[0] * parcelAcres, c.perAcre[1] * parcelAcres) + '</div><div class="label">' + esc(c.crop) + '</div></div>';
-          }).join('') +
-          '</div>' +
-          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One crop planted continuously. Gross revenue before seed, fertilizer, and equipment costs. <strong>Fertilization:</strong> this report\'s soil data (drainage, workability, pH \u2014 see Soil Profile above) gives a starting point, but real fertilizer recommendations require an actual lab soil test, not public data alone. Your county extension office typically runs these for $15\u2013$20.</p>';
-
-        const rotation = getRotationPlantingIncome(bucket, parcelAcres);
-        if(rotation){
-          body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Rotation Planting</p>' +
-            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-              '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotation.lowRevenue, rotation.highRevenue) + '</div><div class="label">Blended Revenue/yr</div></div>' +
-            '</div>' +
-            '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;"><strong>' + rotation.sequence.map(esc).join(' \u2192 ') + '</strong>, rotated over successive years. ' + esc(rotation.note) + ' Blended average across the full rotation cycle, not any single year\'s crop alone \u2014 before input costs, same as above.</p>';
-        }
-      }
-
-      body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Leases &amp; Conservation Payments</p>' +
-        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-          (huntLease ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(huntLease.lowRevenue, huntLease.highRevenue) + '</div><div class="label">Hunting Lease /yr</div></div>' : '') +
-          (solarLease ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(solarLease.lowRevenue, solarLease.highRevenue) + '</div><div class="label">Solar Lease /yr*</div></div>' : '') +
-          (crp ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(crp.lowRevenue, crp.highRevenue) + '</div><div class="label">CRP Payment /yr</div></div>' : '') +
-        '</div>' +
-        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Hunting leases are genuinely one of the most overlooked income sources for rural land like this. *Solar lease potential depends heavily on proximity to grid interconnection, which this report doesn\'t assess \u2014 treat this as general awareness, not a live offer estimate. CRP (USDA Conservation Reserve Program) rates vary significantly by county and soil type \u2014 your local USDA Farm Service Agency office has the real number for this specific land.</p>';
-
-      if(startup){
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Startup Costs to Weigh Against the Above</p>' +
-          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
-            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.fencingCost[0], startup.fencingCost[1]) + '</div><div class="label">Perimeter Fencing (\u2248' + startup.perimeterFeet.toLocaleString() + ' ft)</div></div>' +
-            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.waterCost[0], startup.waterCost[1]) + '</div><div class="label">Water Infrastructure</div></div>' +
-            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.basicEquipment[0], startup.basicEquipment[1]) + '</div><div class="label">Basic Equipment</div></div>' +
-          '</div>' +
-          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Rough planning ranges \u2014 actual costs depend heavily on terrain, existing infrastructure, and new vs. used equipment.</p>';
-      }
-
-      html += (paid ? card : function(i,t,b){ return teaseCard(i,t,b,"See real income scenarios computed from this exact property's acreage and rainfall \u2014 hay, livestock, crops, hunting leases, and more."); })("&#128176;", "Income Potential", body);
-    })();
 
 
     const acreageNote = parcelAcres
@@ -3403,6 +3327,101 @@ async function handleSubmit(e){
           tips.map(function(t){ return '<li>' + esc(t) + '</li>'; }).join('') +
         '</ul>';
       html += (paid ? card : function(i,t,b){ return teaseCard(i,t,b,"Get a real 4-bed crop rotation plan built specifically for this climate zone, not a generic planting calendar."); })("&#128197;", "Rotational Planting Schedule", rotHtml);
+    })();
+
+    html += sectionDivider("Income Potential");
+
+    // Income Potential — every number here is a general planning range built from this property's
+    // real acreage and real measured rainfall, run through standard agricultural/lease-rate rules of
+    // thumb. Explicitly not a business plan or a promise: actual results depend enormously on
+    // management, market timing, and capital invested, not just the land itself.
+    (function(){
+      const hay = (parcelAcres && climate) ? getHayIncome(parcelAcres, climate.avgAnnualRainfallIn) : null;
+      const livestockIncome = capacity ? getLivestockIncome(capacity) : null;
+      const cropList = parcelAcres ? CASH_CROPS_BY_BUCKET[bucket] : null;
+      const huntLease = parcelAcres ? getHuntingLeaseIncome(parcelAcres) : null;
+      const solarLease = parcelAcres ? getSolarLeaseIncome(parcelAcres) : null;
+      const crp = parcelAcres ? getCRPEstimate(parcelAcres) : null;
+      const startup = parcelAcres ? getStartupCostEstimate(parcelAcres) : null;
+
+      if(!parcelAcres){
+        html += card("&#128176;", "Income Potential",
+          errNote("Can't estimate income potential without a confirmed parcel acreage (no parcel boundary was matched for this address).")
+        );
+        return;
+      }
+
+      let body = '<span class="tag">Computed from real acreage (\u2248' + parcelAcres.toFixed(1) + ' ac) and real measured rainfall \u2014 general planning ranges, not live market prices or a guarantee</span>';
+
+      body += '<p style="margin-top:14px;margin-bottom:6px;font-weight:600;color:var(--ink);">Hay Production</p>';
+      if(hay && hay.viable){
+        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(hay.lowRevenue, hay.highRevenue) + '</div><div class="label">Gross Revenue/yr (' + hay.lowBales + '\u2013' + hay.highBales + ' round bales)</div></div>' +
+        '</div>' +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Typical yields for this rainfall, before equipment, fuel, and labor costs.</p>';
+      } else if(hay){
+        body += '<p style="font-size:13.5px;color:var(--ink-dim);">Rainfall here is low enough that unirrigated hay production usually isn\'t viable at meaningful scale \u2014 irrigation would change this significantly.</p>';
+      }
+
+      if(livestockIncome){
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Continuous Grazing</p>';
+        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.cattle.lowRevenue, livestockIncome.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + livestockIncome.cattle.unitsSold + ' calves/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.goats.lowRevenue, livestockIncome.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + livestockIncome.goats.unitsSold + ' kids/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.sheep.lowRevenue, livestockIncome.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + livestockIncome.sheep.unitsSold + ' lambs/yr)</div></div>' +
+        '</div>' +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One species at a time \u2014 these are alternatives, not additive. Gross revenue before feed, vet, and mineral costs. Livestock prices are genuinely volatile year to year \u2014 treat this as scale, not a forecast.</p>';
+
+        const rotationalLivestock = getRotationalLivestockIncome(livestockIncome);
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Rotationally Grazed</p>';
+        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.cattle.lowRevenue, rotationalLivestock.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + rotationalLivestock.cattle.unitsSold + ' calves/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.goats.lowRevenue, rotationalLivestock.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + rotationalLivestock.goats.unitsSold + ' kids/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.sheep.lowRevenue, rotationalLivestock.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + rotationalLivestock.sheep.unitsSold + ' lambs/yr)</div></div>' +
+        '</div>' +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Moving animals frequently between paddocks so forage recovers between grazing periods can meaningfully increase carrying capacity above continuous grazing \u2014 often cited in the 1.5\u20132x range with skilled management. This depends far more on management skill and fencing/water infrastructure investment than on the land itself; treat this as the ceiling of what\'s achievable, not a starting expectation.</p>';
+      }
+
+      if(cropList){
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Single Crop</p>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          cropList.map(function(c){
+            return '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(c.perAcre[0] * parcelAcres, c.perAcre[1] * parcelAcres) + '</div><div class="label">' + esc(c.crop) + '</div></div>';
+          }).join('') +
+          '</div>' +
+          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One crop planted continuously. Gross revenue before seed, fertilizer, and equipment costs. <strong>Fertilization:</strong> this report\'s soil data (drainage, workability, pH \u2014 see Soil Profile above) gives a starting point, but real fertilizer recommendations require an actual lab soil test, not public data alone. Your county extension office typically runs these for $15\u2013$20.</p>';
+
+        const rotation = getRotationPlantingIncome(bucket, parcelAcres);
+        if(rotation){
+          body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Rotation Planting</p>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+              '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotation.lowRevenue, rotation.highRevenue) + '</div><div class="label">Blended Revenue/yr</div></div>' +
+            '</div>' +
+            '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;"><strong>' + rotation.sequence.map(esc).join(' \u2192 ') + '</strong>, rotated over successive years. ' + esc(rotation.note) + ' Blended average across the full rotation cycle, not any single year\'s crop alone \u2014 before input costs, same as above.</p>';
+        }
+      }
+
+      body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Leases &amp; Conservation Payments</p>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          (huntLease && huntLease.viable ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(huntLease.perHunterRange[0], huntLease.perHunterRange[1]) + '</div><div class="label">Per Hunter/yr (\u2248' + huntLease.maxHunters + ' hunter' + (huntLease.maxHunters === 1 ? '' : 's') + ')</div></div>' +
+            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(huntLease.lowRevenue, huntLease.highRevenue) + '</div><div class="label">Total Hunting Lease /yr</div></div>' : '') +
+          (solarLease ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(solarLease.lowRevenue, solarLease.highRevenue) + '</div><div class="label">Solar Lease /yr*</div></div>' : '') +
+          (crp ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(crp.lowRevenue, crp.highRevenue) + '</div><div class="label">CRP Payment /yr</div></div>' : '') +
+        '</div>' +
+        (huntLease && !huntLease.viable ? '<p style="font-size:12.5px;color:var(--ink-dim);margin-top:8px;">This acreage is smaller than the roughly ' + huntLease.acresPerHunter + ' acres typically needed to support even one hunter at a comfortable density for a quality lease \u2014 a hunting lease usually isn\'t practical at this size.</p>' : '') +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Hunting leases are genuinely one of the most overlooked income sources for rural land like this' + (huntLease && huntLease.viable ? ' \u2014 modeled here as per-hunter annual dues (a common \u201clease club\u201d structure), at roughly ' + huntLease.acresPerHunter + ' acres per hunter for a comfortable, uncrowded lease' : '') + '. *Solar lease potential depends heavily on proximity to grid interconnection, which this report doesn\'t assess \u2014 treat this as general awareness, not a live offer estimate. CRP (USDA Conservation Reserve Program) rates vary significantly by county and soil type \u2014 your local USDA Farm Service Agency office has the real number for this specific land.</p>';
+
+      if(startup){
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Startup Costs to Weigh Against the Above</p>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.fencingCost[0], startup.fencingCost[1]) + '</div><div class="label">Perimeter Fencing (\u2248' + startup.perimeterFeet.toLocaleString() + ' ft)</div></div>' +
+            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.waterCost[0], startup.waterCost[1]) + '</div><div class="label">Water Infrastructure</div></div>' +
+            '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(startup.basicEquipment[0], startup.basicEquipment[1]) + '</div><div class="label">Basic Equipment</div></div>' +
+          '</div>' +
+          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Rough planning ranges \u2014 actual costs depend heavily on terrain, existing infrastructure, and new vs. used equipment.</p>';
+      }
+
+      html += (paid ? card : function(i,t,b){ return teaseCard(i,t,b,"See real income scenarios computed from this exact property's acreage and rainfall \u2014 hay, livestock, crops, hunting leases, and more."); })("&#128176;", "Income Potential", body);
     })();
 
     html += sectionDivider("Ecology");
