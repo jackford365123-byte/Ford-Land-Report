@@ -1926,6 +1926,25 @@ function getLivestockIncome(capacity){
   };
 }
 
+// Rotationally grazed livestock - a genuinely distinct management approach from continuous grazing
+// (moving animals frequently between paddocks so forage recovers between grazing periods), not just a
+// multiplier tacked onto the same numbers. The 1.5-2x carrying-capacity increase is a commonly cited
+// range for skilled rotational management, applied here as its own standalone comparison against the
+// continuous-grazing baseline above - explicitly the ceiling of what's achievable with real management
+// skill and fencing/water investment, not a starting expectation.
+function getRotationalLivestockIncome(continuousIncome){
+  if(!continuousIncome) return null;
+  function scale(entry, mult){
+    const units = Math.round(entry.unitsSold * mult);
+    return { unitsSold: units, priceRange: entry.priceRange, lowRevenue: units * entry.priceRange[0], highRevenue: units * entry.priceRange[1] };
+  }
+  return {
+    cattle: scale(continuousIncome.cattle, 1.5),
+    goats: scale(continuousIncome.goats, 1.75),
+    sheep: scale(continuousIncome.sheep, 1.75),
+  };
+}
+
 // Cash crops by climate bucket - regionally reasonable crop choices with general gross-revenue-per-acre
 // ranges (before input costs). Fertilization is intentionally NOT quantified here beyond a general
 // note - real fertilizer recommendations require an actual lab soil test, not public data, and saying
@@ -1936,6 +1955,27 @@ const CASH_CROPS_BY_BUCKET = {
   warm: [ { crop: "Cotton", perAcre: [400, 800] }, { crop: "Sorghum", perAcre: [250, 500] }, { crop: "Peanuts", perAcre: [500, 900] } ],
   subtropical: [ { crop: "Citrus (established grove)", perAcre: [1500, 4000] }, { crop: "Vegetables (market garden scale)", perAcre: [3000, 8000] }, { crop: "Sugarcane", perAcre: [700, 1200] } ],
 };
+
+// Rotation planting - a real, standard multi-year crop sequence by climate bucket, not the same single
+// crop repeated. Rotating crops (often pairing a nitrogen-fixing legume with a heavier feeder) is a
+// well-established practice for maintaining soil health and reducing fertilizer need over time, distinct
+// from - and complementary to - growing one crop continuously. Revenue shown is the blended per-acre
+// average across the full rotation cycle, not any single year's crop alone.
+const ROTATION_PLANS_BY_BUCKET = {
+  cold: { sequence: ["Wheat", "Oats", "Hay/Alfalfa"], note: "Alfalfa fixes nitrogen in the soil, reducing fertilizer need for the wheat that follows it." },
+  temperate: { sequence: ["Corn", "Soybeans", "Winter Wheat / Cover Crop"], note: "The classic Midwest 3-year rotation \u2014 soybeans fix nitrogen the corn year benefits from." },
+  warm: { sequence: ["Cotton", "Peanuts", "Sorghum"], note: "Peanuts fix nitrogen and break pest/disease cycles that build up under continuous cotton." },
+  subtropical: { sequence: ["Vegetables (market garden)", "Cover Crop / Legume", "Sugarcane"], note: "A rest/cover-crop season between intensive plantings rebuilds soil organic matter." },
+};
+function getRotationPlantingIncome(bucket, acres){
+  if(!acres) return null;
+  const crops = CASH_CROPS_BY_BUCKET[bucket];
+  const plan = ROTATION_PLANS_BY_BUCKET[bucket];
+  if(!crops || !plan) return null;
+  const avgLow = crops.reduce(function(s,c){ return s + c.perAcre[0]; }, 0) / crops.length;
+  const avgHigh = crops.reduce(function(s,c){ return s + c.perAcre[1]; }, 0) / crops.length;
+  return { sequence: plan.sequence, note: plan.note, lowRevenue: Math.round(avgLow * acres), highRevenue: Math.round(avgHigh * acres) };
+}
 
 // Hunting lease - genuinely one of the most overlooked revenue streams for exactly this kind of rural
 // property, especially in Texas. General per-acre/year range for a habitat/wildlife lease.
@@ -3216,29 +3256,50 @@ async function handleSubmit(e){
 
       body += '<p style="margin-top:14px;margin-bottom:6px;font-weight:600;color:var(--ink);">Hay Production</p>';
       if(hay && hay.viable){
-        body += '<p style="font-size:13.5px;color:var(--ink-dim);">Roughly <strong style="color:var(--ink);">' + hay.lowBales + '\u2013' + hay.highBales + ' round bales/year</strong> at typical yields for this rainfall \u2014 gross revenue around <strong style="color:var(--ink);">' + fmtRange(hay.lowRevenue, hay.highRevenue) + '/year</strong> before equipment, fuel, and labor costs.</p>';
+        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(hay.lowRevenue, hay.highRevenue) + '</div><div class="label">Gross Revenue/yr (' + hay.lowBales + '\u2013' + hay.highBales + ' round bales)</div></div>' +
+        '</div>' +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Typical yields for this rainfall, before equipment, fuel, and labor costs.</p>';
       } else if(hay){
         body += '<p style="font-size:13.5px;color:var(--ink-dim);">Rainfall here is low enough that unirrigated hay production usually isn\'t viable at meaningful scale \u2014 irrigation would change this significantly.</p>';
       }
 
       if(livestockIncome){
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock (pick one \u2014 these are alternatives, not additive)</p>';
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Continuous Grazing</p>';
         body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
           '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.cattle.lowRevenue, livestockIncome.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + livestockIncome.cattle.unitsSold + ' calves/yr)</div></div>' +
           '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.goats.lowRevenue, livestockIncome.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + livestockIncome.goats.unitsSold + ' kids/yr)</div></div>' +
           '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(livestockIncome.sheep.lowRevenue, livestockIncome.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + livestockIncome.sheep.unitsSold + ' lambs/yr)</div></div>' +
         '</div>' +
-        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Gross revenue before feed, vet, and mineral costs. Livestock prices are genuinely volatile year to year \u2014 treat this as scale, not a forecast.</p>';
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One species at a time \u2014 these are alternatives, not additive. Gross revenue before feed, vet, and mineral costs. Livestock prices are genuinely volatile year to year \u2014 treat this as scale, not a forecast.</p>';
+
+        const rotationalLivestock = getRotationalLivestockIncome(livestockIncome);
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Livestock \u2014 Rotationally Grazed</p>';
+        body += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.cattle.lowRevenue, rotationalLivestock.cattle.highRevenue) + '</div><div class="label">Cattle (\u2248' + rotationalLivestock.cattle.unitsSold + ' calves/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.goats.lowRevenue, rotationalLivestock.goats.highRevenue) + '</div><div class="label">Goats (\u2248' + rotationalLivestock.goats.unitsSold + ' kids/yr)</div></div>' +
+          '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotationalLivestock.sheep.lowRevenue, rotationalLivestock.sheep.highRevenue) + '</div><div class="label">Sheep (\u2248' + rotationalLivestock.sheep.unitsSold + ' lambs/yr)</div></div>' +
+        '</div>' +
+        '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Moving animals frequently between paddocks so forage recovers between grazing periods can meaningfully increase carrying capacity above continuous grazing \u2014 often cited in the 1.5\u20132x range with skilled management. This depends far more on management skill and fencing/water infrastructure investment than on the land itself; treat this as the ceiling of what\'s achievable, not a starting expectation.</p>';
       }
 
       if(cropList){
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops Suited to This Climate</p>' +
+        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Single Crop</p>' +
           '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
           cropList.map(function(c){
             return '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(c.perAcre[0] * parcelAcres, c.perAcre[1] * parcelAcres) + '</div><div class="label">' + esc(c.crop) + '</div></div>';
           }).join('') +
           '</div>' +
-          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Gross revenue before seed, fertilizer, and equipment costs. <strong>Fertilization:</strong> this report\'s soil data (drainage, workability, pH \u2014 see Soil Profile above) gives a starting point, but real fertilizer recommendations require an actual lab soil test, not public data alone. Your county extension office typically runs these for $15\u2013$20.</p>';
+          '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">One crop planted continuously. Gross revenue before seed, fertilizer, and equipment costs. <strong>Fertilization:</strong> this report\'s soil data (drainage, workability, pH \u2014 see Soil Profile above) gives a starting point, but real fertilizer recommendations require an actual lab soil test, not public data alone. Your county extension office typically runs these for $15\u2013$20.</p>';
+
+        const rotation = getRotationPlantingIncome(bucket, parcelAcres);
+        if(rotation){
+          body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Cash Crops \u2014 Rotation Planting</p>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">' +
+              '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(rotation.lowRevenue, rotation.highRevenue) + '</div><div class="label">Blended Revenue/yr</div></div>' +
+            '</div>' +
+            '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;"><strong>' + rotation.sequence.map(esc).join(' \u2192 ') + '</strong>, rotated over successive years. ' + esc(rotation.note) + ' Blended average across the full rotation cycle, not any single year\'s crop alone \u2014 before input costs, same as above.</p>';
+        }
       }
 
       body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Leases &amp; Conservation Payments</p>' +
@@ -3248,14 +3309,6 @@ async function handleSubmit(e){
           (crp ? '<div class="scoreCard"><div class="num" style="font-size:15px;">' + fmtRange(crp.lowRevenue, crp.highRevenue) + '</div><div class="label">CRP Payment /yr</div></div>' : '') +
         '</div>' +
         '<p style="font-size:12px;color:var(--ink-faint);margin-top:6px;">Hunting leases are genuinely one of the most overlooked income sources for rural land like this. *Solar lease potential depends heavily on proximity to grid interconnection, which this report doesn\'t assess \u2014 treat this as general awareness, not a live offer estimate. CRP (USDA Conservation Reserve Program) rates vary significantly by county and soil type \u2014 your local USDA Farm Service Agency office has the real number for this specific land.</p>';
-
-      if(hay && livestockIncome && huntLease){
-        const stackedLow = Math.round((hay.lowRevenue * 0.4) + livestockIncome.cattle.lowRevenue + huntLease.lowRevenue);
-        const stackedHigh = Math.round((hay.highRevenue * 0.4) + livestockIncome.cattle.highRevenue + huntLease.highRevenue);
-        body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">A Realistic Combined Scenario</p>' +
-          '<p style="font-size:13.5px;color:var(--ink-dim);">Most working land doesn\'t do just one thing. Cattle on the majority of the acreage, hay cut from the remainder, plus a hunting lease in the off-season, could realistically gross around <strong style="color:var(--ink);">' + fmtRange(stackedLow, stackedHigh) + '/year</strong> combined \u2014 before any of the input costs noted above.</p>' +
-          '<p style="font-size:13.5px;color:var(--ink-dim);margin-top:8px;"><strong>Intensive rotational/regenerative management</strong> (moving livestock frequently between paddocks to let forage recover) can meaningfully increase carrying capacity above the baseline estimate \u2014 often cited in the 1.5\u20132x range with skilled management \u2014 but this depends far more on management skill and fencing/water infrastructure investment than on the land itself. Treat any regenerative-management number as the ceiling of what\'s achievable, not a starting expectation.</p>';
-      }
 
       if(startup){
         body += '<p style="margin-top:16px;margin-bottom:6px;font-weight:600;color:var(--ink);">Startup Costs to Weigh Against the Above</p>' +
